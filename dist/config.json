@@ -1,0 +1,7 @@
+{
+  "Quark": {
+    "access_tokens": [
+      "ctoken=your_ctoken_value_here; __pus=your_pus_value_here; cookie1=value1; cookie2=value2;"
+    ]
+  }
+}
