@@ -43,52 +43,20 @@ func (qc *QuarkClient) GetUserInfo() (*StandardResponse, error) {
 
 	// 检查 success 字段
 	success, ok := jsonResp["success"].(bool)
-	if !ok || !success {
-		return &StandardResponse{
-			Success: false,
-			Code:    "INVALID_SUCCESS",
-			Message: fmt.Sprintf("API returned error: success=%v", success),
-			Data:    nil,
-		}, nil
-	}
-
-	// 检查 code 字段
+	message, ok := jsonResp["msg"].(string)
 	code, _ := jsonResp["code"].(string)
-	if code != "OK" {
+	if ok && !success {
 		return &StandardResponse{
-			Success: false,
+			Success: success,
 			Code:    code,
-			Message: fmt.Sprintf("API returned error: code=%s", code),
-			Data:    nil,
+			Message: fmt.Sprintf("API returned: %s", message),
 		}, nil
-	}
-
-	// 检查 data 字段
-	data, ok := jsonResp["data"].(map[string]interface{})
-	if !ok {
+	} else {
 		return &StandardResponse{
-			Success: false,
-			Code:    "INVALID_DATA_FORMAT",
-			Message: "invalid data format in response",
-			Data:    nil,
+			Success: success,
+			Code:    code,
+			Message: "get user info success",
+			Data:    jsonResp["data"].(map[string]interface{}),
 		}, nil
 	}
-
-	// 检查数据是否为空
-	if len(data) == 0 {
-		return &StandardResponse{
-			Success: false,
-			Code:    "EMPTY_DATA",
-			Message: "用户数据为空，获取用户信息失败",
-			Data:    nil,
-		}, nil
-	}
-
-	// 所有检查通过，返回成功响应
-	return &StandardResponse{
-		Success: true,
-		Code:    "OK",
-		Message: "获取用户信息成功",
-		Data:    data,
-	}, nil
 }

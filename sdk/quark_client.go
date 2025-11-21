@@ -327,11 +327,34 @@ func (qc *QuarkClient) makeRequest(method, urlOrEndpoint string, body io.Reader,
 		fmt.Printf("[调试] 响应内容: %s\n\n", string(bodyBytes))
 	}
 
+	// 检查HTTP状态码，如果>=400表示请求失败
+	// 尝试解析响应体获取具体错误信息
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("API request failed: status %d", resp.StatusCode)
+		// 尝试解析响应体为JSON，提取错误消息
+		var errorResp map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &errorResp); err == nil {
+			// 成功解析JSON，尝试提取message字段
+			if msg, ok := errorResp["message"].(string); ok && msg != "" {
+				return nil, fmt.Errorf("status %d: %s", resp.StatusCode, msg)
+			}
+			// 如果没有message字段，尝试提取errmsg字段
+			if msg, ok := errorResp["errmsg"].(string); ok && msg != "" {
+				return nil, fmt.Errorf("status %d: %s", resp.StatusCode, msg)
+			}
+			// 如果都没有，尝试提取code字段
+			if code, ok := errorResp["code"].(float64); ok {
+				return nil, fmt.Errorf("status %d, code %.0f", resp.StatusCode, code)
+			}
+		}
+		// 如果无法解析JSON或没有找到错误消息，返回原始响应体（限制长度）
+		bodyStr := string(bodyBytes)
+		if len(bodyStr) > 500 {
+			bodyStr = bodyStr[:500] + "..."
+		}
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, bodyStr)
 	}
 
-	// 解析 JSON 响应
+	// 解析JSON响应体
 	var jsonResp map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &jsonResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)

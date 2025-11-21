@@ -362,10 +362,27 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 					Data:    nil,
 				}, nil
 			}
-			destDir = destDirInfo.Data["fid"].(string)
-		} else {
-			destDir = destDirInfo.Data["fid"].(string)
 		}
+		// 检查响应是否成功
+		if !destDirInfo.Success {
+			return &StandardResponse{
+				Success: false,
+				Code:    destDirInfo.Code,
+				Message: fmt.Sprintf("failed to get destination directory: %s", destDirInfo.Message),
+				Data:    nil,
+			}, nil
+		}
+		// 安全地获取 fid
+		fid, ok := destDirInfo.Data["fid"].(string)
+		if !ok || fid == "" {
+			return &StandardResponse{
+				Success: false,
+				Code:    "INVALID_DIRECTORY_INFO",
+				Message: "destination directory info is invalid: fid not found or empty",
+				Data:    nil,
+			}, nil
+		}
+		destDir = fid
 	}
 
 	// 4. 确定 MIME 类型（使用目标文件名）

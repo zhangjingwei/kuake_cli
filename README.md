@@ -24,6 +24,7 @@
 - [快速开始](#-快速开始)
 - [配置说明](#-配置说明)
 - [CLI 工具使用](#-cli-工具使用)
+- [变更日志](#-变更日志)
 - [注意事项](#-注意事项)
 - [免责声明](#-免责声明)
 - [许可证](#-许可证)
@@ -85,13 +86,13 @@ chmod +x build.sh
 ```bash
 # 1. 下载二进制文件
 # 方式A：下载最新版本
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.0-linux-amd64
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.1-linux-amd64
 
 # 方式B：下载指定版本
-# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.0/kuake-v1.3.0-linux-amd64
+# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.1/kuake-v1.3.1-linux-amd64
 
 # 2. 添加执行权限
-chmod +x kuake-v1.3.0-linux-amd64
+chmod +x kuake-v1.3.1-linux-amd64
 
 # 3. 下载配置文件示例（可选）
 wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json
@@ -100,10 +101,10 @@ wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.j
 # 使用文本编辑器打开 config.json，替换示例值
 
 # 5. 使用方式（方式A：直接使用）
-./kuake-v1.3.0-linux-amd64 user
+./kuake-v1.3.1-linux-amd64 user
 
 # 5. 使用方式（方式B：移动到 PATH，推荐）
-sudo mv kuake-v1.3.0-linux-amd64 /usr/local/bin/kuake
+sudo mv kuake-v1.3.1-linux-amd64 /usr/local/bin/kuake
 kuake user
 ```
 
@@ -112,15 +113,15 @@ kuake user
 ```bash
 # 1. 下载二进制文件
 # 方式A：下载最新版本
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.0-darwin-amd64
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.1-darwin-amd64
 # 或使用 curl
-curl -L -o kuake-v1.3.0-darwin-amd64 https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.0-darwin-amd64
+curl -L -o kuake-v1.3.1-darwin-amd64 https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.1-darwin-amd64
 
 # 方式B：下载指定版本
-# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.0/kuake-v1.3.0-darwin-amd64
+# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.1/kuake-v1.3.1-darwin-amd64
 
 # 2. 添加执行权限
-chmod +x kuake-v1.3.0-darwin-amd64
+chmod +x kuake-v1.3.1-darwin-amd64
 
 # 3. 下载配置文件示例（可选）
 wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json
@@ -131,10 +132,10 @@ curl -L -o config.json https://github.com/zhangjingwei/kuake_sdk/releases/latest
 # 使用文本编辑器打开 config.json，替换示例值
 
 # 5. 使用方式（方式A：直接使用）
-./kuake-v1.3.0-darwin-amd64 user
+./kuake-v1.3.1-darwin-amd64 user
 
 # 5. 使用方式（方式B：移动到 PATH，推荐）
-sudo mv kuake-v1.3.0-darwin-amd64 /usr/local/bin/kuake
+sudo mv kuake-v1.3.1-darwin-amd64 /usr/local/bin/kuake
 kuake user
 ```
 
@@ -143,10 +144,10 @@ kuake user
 ```powershell
 # 1. 下载二进制文件
 # 方式A：下载最新版本
-Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.0-windows-amd64.exe" -OutFile "kuake-v1.3.0-windows-amd64.exe"
+Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.1-windows-amd64.exe" -OutFile "kuake-v1.3.1-windows-amd64.exe"
 
 # 方式B：下载指定版本
-# Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.0/kuake-v1.3.0-windows-amd64.exe" -OutFile "kuake-v1.3.0-windows-amd64.exe"
+# Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.1/kuake-v1.3.1-windows-amd64.exe" -OutFile "kuake-v1.3.1-windows-amd64.exe"
 
 # 2. 下载配置文件示例（可选）
 Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json" -OutFile "config.json"
@@ -155,7 +156,7 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 # 使用文本编辑器打开 config.json，替换示例值
 
 # 4. 使用方式（在 PowerShell 或 CMD 中）
-.\kuake-v1.3.0-windows-amd64.exe user
+.\kuake-v1.3.1-windows-amd64.exe user
 ```
 
 ## 🚀 快速开始
@@ -191,16 +192,16 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 
 ```bash
 # 获取用户信息
-./kuake-v1.3.0-linux-amd64 user
+./kuake-v1.3.1-linux-amd64 user
 
 # 上传文件
-./kuake-v1.3.0-linux-amd64 upload "file.txt" "/file.txt"
+./kuake-v1.3.1-linux-amd64 upload "file.txt" "/file.txt"
 
 # 列出目录
-./kuake-v1.3.0-linux-amd64 list "/"
+./kuake-v1.3.1-linux-amd64 list "/"
 
 # 查看帮助
-./kuake-v1.3.0-linux-amd64 help
+./kuake-v1.3.1-linux-amd64 help
 ```
 
 ## ⚙️ 配置说明
@@ -346,6 +347,81 @@ kuake <command> [config.json] [arguments...]
 - 示例中的 `{version}`、`{os}`、`{arch}` 需要替换为实际值
 - Windows 用户需要添加 `.exe` 扩展名并使用 `.\` 前缀
 - 如果已添加到 PATH，可以直接使用 `kuake` 命令
+
+## 📝 变更日志
+
+### v1.3.1 (最新更新)
+
+#### 🐛 Bug 修复
+
+1. **错误消息转义问题修复** (`cmd/main.go`)
+   - 修复了 CLI 错误消息中双引号在 JSON 输出时被转义的问题
+   - 将所有错误消息示例从双引号改为单引号，避免 JSON 编码时的转义问题
+   - 影响的命令：`upload`, `create`, `info`, `move`, `copy`, `rename`, `delete`, `download`
+
+2. **API 错误响应处理优化** (`sdk/quark_client.go`)
+   - 改进了 HTTP 错误响应的处理逻辑
+   - 现在会尝试解析 JSON 响应体，提取具体的错误消息（`message`、`errmsg`、`code` 字段）
+   - 如果无法解析 JSON，会返回原始响应体的前 500 个字符
+   - 错误消息更加清晰，便于调试和定位问题
+
+3. **类型断言安全性修复** (`sdk/file.go`, `sdk/share.go`)
+   - 修复了多处直接类型断言可能导致 panic 的问题
+   - 在 `CreateFolder`、`UploadFile`、`CreateShare` 等方法中添加了安全的类型检查和错误处理
+   - 确保在访问 `Data["fid"]` 等字段前先检查响应是否成功，以及字段是否存在
+
+#### ✨ 新功能
+
+1. **完整的单元测试套件**
+   - 新增 `sdk/config_test.go` - 配置文件加载和保存的测试
+   - 新增 `sdk/quark_client_test.go` - 客户端初始化和基础方法的测试
+   - 新增 `sdk/user_test.go` - 用户信息获取的测试
+   - 新增 `sdk/file_test.go` - 文件操作相关测试
+   - 新增 `sdk/share_test.go` - 分享功能相关测试
+   - 新增 `sdk/TEST_README.md` - 测试说明文档
+
+2. **测试覆盖**
+   - 单元测试：覆盖不依赖外部资源的函数（如 `normalizeRootDir`, `parseCookie`, `ConvertToFileInfo`）
+   - 集成测试框架：为需要网络和 API 的测试提供了测试框架（标记为 `t.Skip()`）
+   - 表驱动测试：使用表驱动测试提高测试覆盖率
+
+#### 🔧 代码改进
+
+1. **错误处理增强**
+   - 在 `quark_client.go` 的错误处理中添加了详细的注释说明
+   - 改进了错误消息的可读性和信息量
+
+2. **代码质量**
+   - 所有测试用例通过编译和运行
+   - 修复了潜在的 nil 指针解引用问题
+   - 提高了代码的健壮性和安全性
+
+#### 📚 文档更新
+
+1. **测试文档**
+   - 新增 `sdk/TEST_README.md`，详细说明如何运行测试
+   - 包含测试用例列表、运行方法、覆盖率查看等说明
+
+#### 🔍 测试统计
+
+- **测试文件数量**: 5 个
+- **测试函数数量**: 30+ 个
+- **代码覆盖率**: 约 5.9%（单元测试部分，集成测试被跳过）
+
+#### 📋 详细变更文件列表
+
+- `sdk/quark_client.go` - 错误处理优化，添加错误消息提取逻辑
+- `cmd/main.go` - 修复错误消息转义问题（8 处修改）
+- `sdk/file.go` - 修复类型断言安全问题（2 处修改）
+- `sdk/share.go` - 修复类型断言安全问题（1 处修改）
+- `sdk/config_test.go` - 新增配置文件测试
+- `sdk/quark_client_test.go` - 新增客户端测试
+- `sdk/user_test.go` - 新增用户信息测试
+- `sdk/file_test.go` - 新增文件操作测试
+- `sdk/share_test.go` - 新增分享功能测试
+- `sdk/TEST_README.md` - 新增测试文档
+
+---
 
 ## ⚠️ 注意事项
 

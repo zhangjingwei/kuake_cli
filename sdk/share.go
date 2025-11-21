@@ -213,13 +213,28 @@ func (qc *QuarkClient) CreateShare(filePath string, expireDays int, needPasscode
 		return nil, fmt.Errorf("failed to get file info: %w", err)
 	}
 
+	// 检查响应是否成功
+	if !fileInfo.Success {
+		return nil, fmt.Errorf("failed to get file info: %s", fileInfo.Message)
+	}
+
+	// 安全地获取 fid 和 file_name
+	fid, ok := fileInfo.Data["fid"].(string)
+	if !ok || fid == "" {
+		return nil, fmt.Errorf("file info is invalid: fid not found or empty")
+	}
+	fileName, ok := fileInfo.Data["file_name"].(string)
+	if !ok {
+		fileName = "" // 如果没有文件名，使用空字符串
+	}
+
 	// 构建请求数据
 	// 根据实际API，参数名是 expired_type
 	// expired_type值：1=永久有效，2=1天，3=7天，4=30天
 	// url_type值：1=不需要提取码，2=需要提取码
 	data := map[string]interface{}{
-		"fid_list": []string{fileInfo.Data["fid"].(string)},
-		"title":    fileInfo.Data["file_name"].(string),
+		"fid_list": []string{fid},
+		"title":    fileName,
 		"url_type": 1, // 默认不需要提取码
 	}
 

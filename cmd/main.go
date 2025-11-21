@@ -18,7 +18,7 @@ const (
 )
 
 // Version 版本号
-var Version = "v1.3.0"
+var Version = "v1.3.1"
 
 type CLIResult struct {
 	Success bool                   `json:"success"`
@@ -192,7 +192,7 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: "Usage: upload <file> <dest> (all parameters must be quoted, e.g., upload \"file(1).txt\" \"/dest/file.txt\")",
+			Message: `Usage: upload <file> <dest> (all parameters must be quoted, e.g., upload 'file(1).txt' '/dest/file.txt')`,
 		}
 	}
 
@@ -269,7 +269,7 @@ func handleInfo(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: "Usage: info <path> (path must be quoted, e.g., info \"file(1).txt\")",
+			Message: `Usage: info <path> (path must be quoted, e.g., info 'file(1).txt')`,
 		}
 	}
 
@@ -304,7 +304,7 @@ func handleCreateFolder(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: "Usage: create <name> <pdir> (all parameters must be quoted, e.g., create \"folder(1)\" \"/\")",
+			Message: `Usage: create <name> <pdir> (all parameters must be quoted, e.g., create 'folder(1)' '/')`,
 		}
 	}
 
@@ -377,7 +377,7 @@ func handleMove(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: "Usage: move <src> <dest> (all parameters must be quoted, e.g., move \"file(1).txt\" \"/dest/\")",
+			Message: `Usage: move <src> <dest> (all parameters must be quoted, e.g., move 'file(1).txt' '/dest/')`,
 		}
 	}
 
@@ -414,7 +414,7 @@ func handleCopy(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: "Usage: copy <src> <dest> (all parameters must be quoted, e.g., copy \"file(1).txt\" \"/dest/\")",
+			Message: `Usage: copy <src> <dest> (all parameters must be quoted, e.g., copy 'file(1).txt' '/dest/')`,
 		}
 	}
 
@@ -451,7 +451,7 @@ func handleRename(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: "Usage: rename <path> <newName> (all parameters must be quoted, e.g., rename \"file(1).txt\" \"new_name.txt\")",
+			Message: `Usage: rename <path> <newName> (all parameters must be quoted, e.g., rename 'file(1).txt' 'new_name.txt')`,
 		}
 	}
 
@@ -488,7 +488,7 @@ func handleDelete(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: "Usage: delete <path> (path must be quoted, e.g., delete \"file(1).txt\")",
+			Message: `Usage: delete <path> (path must be quoted, e.g., delete 'file(1).txt')`,
 		}
 	}
 
@@ -589,7 +589,7 @@ func handleDownloadURL(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: "Usage: download <path> (path must be quoted, e.g., download \"file(1).txt\")",
+			Message: `Usage: download <path> (path must be quoted, e.g., download 'file(1).txt')`,
 		}
 	}
 
