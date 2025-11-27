@@ -175,7 +175,7 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 {
   "Quark": {
     "access_tokens": [
-      "ctoken=your_ctoken_value_here; __pus=your_pus_value_here;"
+      "__pus=your_pus_value_here;"
     ]
   }
 }
@@ -212,7 +212,7 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 {
   "Quark": {
     "access_tokens": [
-      "ctoken=your_ctoken_value_here; __pus=your_pus_value_here;"
+      "__pus=your_pus_value_here;"
     ]
   }
 }

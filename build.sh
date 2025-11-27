@@ -90,7 +90,7 @@ cat > "${BUILD_DIR}/config.json" << 'EOF'
 {
   "Quark": {
     "access_tokens": [
-      "ctoken=your_ctoken_value_here; __pus=your_pus_value_here;"
+      "__pus=your_pus_value_here;"
     ]
   }
 }
