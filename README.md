@@ -86,13 +86,13 @@ chmod +x build.sh
 ```bash
 # 1. 下载二进制文件
 # 方式A：下载最新版本
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.1-linux-amd64
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.2-linux-amd64
 
 # 方式B：下载指定版本
-# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.1/kuake-v1.3.1-linux-amd64
+# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.2/kuake-v1.3.2-linux-amd64
 
 # 2. 添加执行权限
-chmod +x kuake-v1.3.1-linux-amd64
+chmod +x kuake-v1.3.2-linux-amd64
 
 # 3. 下载配置文件示例（可选）
 wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json
@@ -101,10 +101,10 @@ wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.j
 # 使用文本编辑器打开 config.json，替换示例值
 
 # 5. 使用方式（方式A：直接使用）
-./kuake-v1.3.1-linux-amd64 user
+./kuake-v1.3.2-linux-amd64 user
 
 # 5. 使用方式（方式B：移动到 PATH，推荐）
-sudo mv kuake-v1.3.1-linux-amd64 /usr/local/bin/kuake
+sudo mv kuake-v1.3.2-linux-amd64 /usr/local/bin/kuake
 kuake user
 ```
 
@@ -113,15 +113,15 @@ kuake user
 ```bash
 # 1. 下载二进制文件
 # 方式A：下载最新版本
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.1-darwin-amd64
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.2-darwin-amd64
 # 或使用 curl
-curl -L -o kuake-v1.3.1-darwin-amd64 https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.1-darwin-amd64
+curl -L -o kuake-v1.3.2-darwin-amd64 https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.2-darwin-amd64
 
 # 方式B：下载指定版本
-# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.1/kuake-v1.3.1-darwin-amd64
+# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.2/kuake-v1.3.2-darwin-amd64
 
 # 2. 添加执行权限
-chmod +x kuake-v1.3.1-darwin-amd64
+chmod +x kuake-v1.3.2-darwin-amd64
 
 # 3. 下载配置文件示例（可选）
 wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json
@@ -132,10 +132,10 @@ curl -L -o config.json https://github.com/zhangjingwei/kuake_sdk/releases/latest
 # 使用文本编辑器打开 config.json，替换示例值
 
 # 5. 使用方式（方式A：直接使用）
-./kuake-v1.3.1-darwin-amd64 user
+./kuake-v1.3.2-darwin-amd64 user
 
 # 5. 使用方式（方式B：移动到 PATH，推荐）
-sudo mv kuake-v1.3.1-darwin-amd64 /usr/local/bin/kuake
+sudo mv kuake-v1.3.2-darwin-amd64 /usr/local/bin/kuake
 kuake user
 ```
 
@@ -144,10 +144,10 @@ kuake user
 ```powershell
 # 1. 下载二进制文件
 # 方式A：下载最新版本
-Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.1-windows-amd64.exe" -OutFile "kuake-v1.3.1-windows-amd64.exe"
+Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.2-windows-amd64.exe" -OutFile "kuake-v1.3.2-windows-amd64.exe"
 
 # 方式B：下载指定版本
-# Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.1/kuake-v1.3.1-windows-amd64.exe" -OutFile "kuake-v1.3.1-windows-amd64.exe"
+# Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.2/kuake-v1.3.2-windows-amd64.exe" -OutFile "kuake-v1.3.2-windows-amd64.exe"
 
 # 2. 下载配置文件示例（可选）
 Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json" -OutFile "config.json"
@@ -156,7 +156,7 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 # 使用文本编辑器打开 config.json，替换示例值
 
 # 4. 使用方式（在 PowerShell 或 CMD 中）
-.\kuake-v1.3.1-windows-amd64.exe user
+.\kuake-v1.3.2-windows-amd64.exe user
 ```
 
 ## 🚀 快速开始
@@ -192,16 +192,16 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 
 ```bash
 # 获取用户信息
-./kuake-v1.3.1-linux-amd64 user
+./kuake-v1.3.2-linux-amd64 user
 
 # 上传文件
-./kuake-v1.3.1-linux-amd64 upload "file.txt" "/file.txt"
+./kuake-v1.3.2-linux-amd64 upload "file.txt" "/file.txt"
 
 # 列出目录
-./kuake-v1.3.1-linux-amd64 list "/"
+./kuake-v1.3.2-linux-amd64 list "/"
 
 # 查看帮助
-./kuake-v1.3.1-linux-amd64 help
+./kuake-v1.3.2-linux-amd64 help
 ```
 
 ## ⚙️ 配置说明
@@ -350,7 +350,18 @@ kuake <command> [config.json] [arguments...]
 
 ## 📝 变更日志
 
-### v1.3.1 (最新更新)
+### v1.3.2 (最新更新)
+
+#### ✨ 新功能
+
+1. **取消分享功能** (`sdk/share.go`, `cmd/main.go`)
+   - 新增 `DeleteShare` 方法，支持通过 share_id 取消分享
+   - 新增 `GetMyShareList` 方法，获取用户的分享列表
+   - 新增 `GetShareIDByFid` 方法，通过文件 fid 从分享列表中查找 share_id
+   - CLI 新增 `share-delete` 命令，支持通过 share_id 或文件路径取消分享
+   - 支持通过文件路径自动查找并删除对应的分享
+
+### v1.3.1
 
 #### 🐛 Bug 修复
 

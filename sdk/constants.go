@@ -46,8 +46,10 @@ const (
 
 // 内容分享
 const (
-	SHARE          = "/1/clouddrive/share"
-	SHARE_PASSWORD = "/1/clouddrive/share/password"
+	SHARE                  = "/1/clouddrive/share"
+	SHARE_PASSWORD         = "/1/clouddrive/share/password"
+	SHARE_DELETE           = "/1/clouddrive/share/delete"
+	SHARE_MYPAGE_DETAIL    = "/1/clouddrive/share/mypage/detail"
 )
 
 // 任务状态

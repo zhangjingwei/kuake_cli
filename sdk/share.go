@@ -493,3 +493,146 @@ func (qc *QuarkClient) SetSharePassword(pwdID, passcode string) error {
 
 	return nil
 }
+
+// GetMyShareList 获取我的分享列表
+// page: 页码，默认1
+// size: 每页数量，默认50
+// orderField: 排序字段，默认"created_at"
+// orderType: 排序方式，"asc" 或 "desc"，默认"desc"
+// 返回分享列表数据和错误
+func (qc *QuarkClient) GetMyShareList(page, size int, orderField, orderType string) (map[string]interface{}, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if size <= 0 {
+		size = 50
+	}
+	if orderField == "" {
+		orderField = "created_at"
+	}
+	if orderType == "" {
+		orderType = "desc"
+	}
+
+	queryParams := url.Values{}
+	queryParams.Set("pr", "ucpro")
+	queryParams.Set("fr", "pc")
+	queryParams.Set("uc_param_str", "")
+	queryParams.Set("_page", fmt.Sprintf("%d", page))
+	queryParams.Set("_size", fmt.Sprintf("%d", size))
+	queryParams.Set("_order_field", orderField)
+	queryParams.Set("_order_type", orderType)
+	queryParams.Set("_fetch_total", "1")
+	queryParams.Set("_fetch_notify_follow", "1")
+
+	reqURL := DRIVE_DOMAIN + SHARE_MYPAGE_DETAIL + "?" + queryParams.Encode()
+	respMap, err := qc.makeRequest("GET", reqURL, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	var listResp struct {
+		Code   int                    `json:"code"`
+		Status int                    `json:"status"`
+		Data   map[string]interface{} `json:"data"`
+	}
+
+	if err := qc.parseResponse(respMap, &listResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if listResp.Code != 0 || listResp.Status != 200 {
+		return nil, fmt.Errorf("get my share list failed: code=%d, status=%d", listResp.Code, listResp.Status)
+	}
+
+	return listResp.Data, nil
+}
+
+// GetShareIDByFid 通过文件fid从我的分享列表中获取share_id
+// fid: 文件ID
+// 返回share_id和错误
+func (qc *QuarkClient) GetShareIDByFid(fid string) (string, error) {
+	// 获取我的分享列表，查找匹配的fid
+	// 可能需要遍历多页，先尝试第一页
+	shareList, err := qc.GetMyShareList(1, 50, "created_at", "desc")
+	if err != nil {
+		return "", fmt.Errorf("failed to get share list: %w", err)
+	}
+
+	// 从响应中提取分享列表
+	list, ok := shareList["list"]
+	if !ok {
+		return "", fmt.Errorf("share list not found in response")
+	}
+
+	shareListArray, ok := list.([]interface{})
+	if !ok {
+		return "", fmt.Errorf("share list format is invalid")
+	}
+
+	// 遍历分享列表，查找匹配的fid
+	for _, item := range shareListArray {
+		shareItem, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// 从first_file属性中获取fid
+		if firstFile, ok := shareItem["first_file"].(map[string]interface{}); ok {
+			if itemFid, ok := firstFile["fid"].(string); ok && itemFid == fid {
+				// 找到匹配的fid，提取share_id
+				if shareID, ok := shareItem["share_id"].(string); ok && shareID != "" {
+					return shareID, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("share_id not found for fid: %s", fid)
+}
+
+// DeleteShare 取消分享（删除分享）
+// shareIDs: 要删除的分享ID列表
+// 返回错误
+func (qc *QuarkClient) DeleteShare(shareIDs []string) error {
+	if len(shareIDs) == 0 {
+		return fmt.Errorf("share_ids cannot be empty")
+	}
+
+	queryParams := url.Values{}
+	queryParams.Set("pr", "ucpro")
+	queryParams.Set("fr", "pc")
+	queryParams.Set("uc_param_str", "")
+
+	data := map[string]interface{}{
+		"share_ids": shareIDs,
+	}
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request data: %w", err)
+	}
+
+	reqURL := DRIVE_DOMAIN + SHARE_DELETE + "?" + queryParams.Encode()
+	respMap, err := qc.makeRequest("POST", reqURL, bytes.NewBuffer(jsonData), nil)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+
+	var deleteResp struct {
+		Code      int    `json:"code"`
+		Status    int    `json:"status"`
+		Message   string `json:"message"`
+		Timestamp int64  `json:"timestamp"`
+	}
+
+	if err := qc.parseResponse(respMap, &deleteResp); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if deleteResp.Code != 0 || deleteResp.Status != 200 {
+		return fmt.Errorf("delete share failed: code=%d, status=%d, message=%s", deleteResp.Code, deleteResp.Status, deleteResp.Message)
+	}
+
+	return nil
+}
