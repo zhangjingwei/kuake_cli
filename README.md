@@ -39,7 +39,7 @@
 - **文件夹操作**: 创建文件夹
 - **文件操作**: 移动、复制、重命名文件或目录
 - **文件删除**: 删除夸克网盘中的文件或目录
-- **分享功能**: 创建分享链接，支持设置有效期和提取码
+- **分享功能**: 创建分享链接，支持设置有效期和提取码；取消分享，支持通过 share_id 或文件路径取消分享
 - **CLI 工具**: 提供命令行工具，方便其他进程调用
 
 ## 🔧 系统要求
@@ -253,6 +253,7 @@ kuake <command> [config.json] [arguments...]
 | `rename <path> <newName>` | 重命名文件/文件夹 | `kuake rename "/file.txt" "new_name.txt"` |
 | `delete <path>` | 删除文件/文件夹 | `kuake delete "/file.txt"` |
 | `share <path> <days> <passcode>` | 创建分享链接 | `kuake share "/file.txt" 7 "false"` |
+| `share-delete <share_id_or_path> [share_id_or_path2] ...` | 取消分享（支持通过 share_id 或文件路径） | `kuake share-delete "fdd8bfd93f21491ab80122538bec310d"` 或 `kuake share-delete "/file.txt"` |
 | `help` | 显示帮助信息 | `kuake help` |
 
 **重要提示**：
@@ -338,6 +339,15 @@ kuake <command> [config.json] [arguments...]
 
 # 创建分享链接（30天，需要提取码，使用自定义配置文件）
 ./kuake-{version}-{os}-{arch} share "/file.txt" 30 "true" custom.json
+
+# 取消分享（通过 share_id）
+./kuake-{version}-{os}-{arch} share-delete "fdd8bfd93f21491ab80122538bec310d"
+
+# 取消分享（通过文件路径，会自动查找对应的 share_id）
+./kuake-{version}-{os}-{arch} share-delete "/file.txt"
+
+# 同时取消多个分享
+./kuake-{version}-{os}-{arch} share-delete "share_id1" "share_id2" "/file.txt"
 
 # 查看帮助
 ./kuake-{version}-{os}-{arch} help
