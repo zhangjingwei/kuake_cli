@@ -17,10 +17,21 @@ import (
 	"time"
 )
 
-// normalizeRootDir 将根目录的标准表示 "/" 转换为 API 需要的 "0"
-// 如果传入的是 "/"、"" 或 "."，返回 "0"（API 的根目录 FID）
-// 否则返回原值
+// normalizePath 将路径标准化为 Unix 风格（使用 / 作为分隔符）
+func normalizePath(path string) string {
+	path = strings.ReplaceAll(path, "\\", "/")
+	for strings.Contains(path, "//") {
+		path = strings.ReplaceAll(path, "//", "/")
+	}
+	if len(path) > 1 && strings.HasSuffix(path, "/") {
+		path = strings.TrimSuffix(path, "/")
+	}
+	return path
+}
+
+// normalizeRootDir 将根目录路径转换为 API 所需的 FID "0"
 func normalizeRootDir(path string) string {
+	path = normalizePath(path)
 	if path == "" || path == "/" || path == "." {
 		return "0"
 	}
@@ -283,9 +294,8 @@ func (qc *QuarkClient) upFinish(pre *PreUploadResponse) (*FinishResponse, error)
 	return &finishResp, nil
 }
 
-// UploadFile 完整的文件上传流程
+// UploadFile 上传文件到夸克网盘，支持大文件分片上传
 func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback func(int)) (*StandardResponse, error) {
-	// 1. 打开文件
 	file, err := os.Open(filePath)
 	if err != nil {
 		return &StandardResponse{
@@ -297,7 +307,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 	}
 	defer file.Close()
 
-	// 2. 获取文件信息
 	fileInfo, err := file.Stat()
 	if err != nil {
 		return &StandardResponse{
@@ -311,37 +320,58 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 	fileSize := fileInfo.Size()
 	localFileName := fileInfo.Name()
 
-	// 3. 处理目标路径和文件名
-	// 如果 destPath 是目录路径（以 / 结尾或没有文件名），则使用源文件名
+	destPath = normalizePath(destPath)
 	var destFileName string
 	if strings.HasSuffix(destPath, "/") || filepath.Base(destPath) == "" || filepath.Base(destPath) == "." {
-		destPath = filepath.Join(destPath, localFileName)
+		destPath = strings.TrimSuffix(destPath, "/") + "/" + localFileName
 		destFileName = localFileName
 	} else {
-		// 目标路径包含文件名，使用目标路径中的文件名
 		destFileName = filepath.Base(destPath)
 	}
 
-	// 获取目标目录的父目录 ID
-	destDir := filepath.Dir(destPath)
-	destDir = normalizeRootDir(destDir)
-
-	// 检查目标目录是否存在，如果不存在则创建（根目录 "0" 不需要检查）
-	if destDir != "0" {
-		destDirInfo, err := qc.GetFileInfo(destDir)
+	destDirPath := destPath
+	if destDirPath == "/" || destDirPath == "" {
+		destDirPath = "/"
+	} else {
+		lastSlash := strings.LastIndex(destDirPath, "/")
+		if lastSlash == 0 {
+			destDirPath = "/"
+		} else if lastSlash > 0 {
+			destDirPath = destDirPath[:lastSlash]
+		} else {
+			destDirPath = "/"
+		}
+	}
+	destDirPath = normalizePath(destDirPath)
+	
+	if destDirPath != "/" && destDirPath != "" && destDirPath != "." {
+		destDirInfo, err := qc.GetFileInfo(destDirPath)
 		if err != nil {
-			// 目录不存在，尝试创建
-			parts := strings.Split(strings.Trim(destDir, "/"), "/")
+			parts := strings.Split(strings.Trim(destDirPath, "/"), "/")
 			currentPath := ""
 			for _, part := range parts {
 				if part == "" {
 					continue
 				}
-				currentPath = currentPath + "/" + part
+				if currentPath == "" {
+					currentPath = "/" + part
+				} else {
+					currentPath = currentPath + "/" + part
+				}
+				currentPath = normalizePath(currentPath)
 				_, err := qc.GetFileInfo(currentPath)
 				if err != nil {
-					// 目录不存在，创建它
-					_, createErr := qc.CreateFolder(part, currentPath)
+					parentPathForCreate := "/"
+					if currentPath != "/" && currentPath != "" {
+						lastSlash := strings.LastIndex(currentPath, "/")
+						if lastSlash == 0 {
+							parentPathForCreate = "/"
+						} else if lastSlash > 0 {
+							parentPathForCreate = currentPath[:lastSlash]
+						}
+					}
+					parentPathForCreate = normalizePath(parentPathForCreate)
+					_, createErr := qc.CreateFolder(part, parentPathForCreate)
 					if createErr != nil {
 						return &StandardResponse{
 							Success: false,
@@ -352,8 +382,7 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 					}
 				}
 			}
-			// 重新获取目标目录信息
-			destDirInfo, err = qc.GetFileInfo(destDir)
+			destDirInfo, err = qc.GetFileInfo(destDirPath)
 			if err != nil {
 				return &StandardResponse{
 					Success: false,
@@ -363,7 +392,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 				}, nil
 			}
 		}
-		// 检查响应是否成功
 		if !destDirInfo.Success {
 			return &StandardResponse{
 				Success: false,
@@ -372,7 +400,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 				Data:    nil,
 			}, nil
 		}
-		// 安全地获取 fid
 		fid, ok := destDirInfo.Data["fid"].(string)
 		if !ok || fid == "" {
 			return &StandardResponse{
@@ -382,17 +409,17 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 				Data:    nil,
 			}, nil
 		}
-		destDir = fid
+		destDirPath = fid
+	} else {
+		destDirPath = "0"
 	}
 
-	// 4. 确定 MIME 类型（使用目标文件名）
 	mimeType := mime.TypeByExtension(filepath.Ext(destFileName))
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
 
-	// 5. 预上传请求（使用目标文件名）
-	pre, err := qc.upPre(destFileName, mimeType, fileSize, destDir)
+	pre, err := qc.upPre(destFileName, mimeType, fileSize, destDirPath)
 	if err != nil {
 		return &StandardResponse{
 			Success: false,
@@ -402,7 +429,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}, nil
 	}
 
-	// 6. 计算文件哈希
 	file.Seek(0, 0)
 	md5Hash := md5.New()
 	sha1Hash := sha1.New()
@@ -420,7 +446,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 	md5Sum := fmt.Sprintf("%x", md5Hash.Sum(nil))
 	sha1Sum := fmt.Sprintf("%x", sha1Hash.Sum(nil))
 
-	// 7. 提交哈希验证
 	hashResp, err := qc.upHash(md5Sum, sha1Sum, pre.Data.TaskID)
 	if err != nil {
 		return &StandardResponse{
@@ -431,7 +456,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}, nil
 	}
 
-	// 8. 如果哈希验证完成，直接完成上传
 	if hashResp.Data.Finish {
 		finish, err := qc.upFinish(pre)
 		if err != nil {
@@ -453,7 +477,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		if progressCallback != nil {
 			progressCallback(100)
 		}
-		// 移除 preview_url 字段
 		responseData := make(map[string]interface{})
 		for k, v := range finish.Data {
 			if k != "preview_url" {
@@ -468,7 +491,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}, nil
 	}
 
-	// 9. 分片上传
 	partSize := pre.Metadata.PartSize
 	file.Seek(0, 0)
 	var etags []string
@@ -580,8 +602,6 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 }
 
 // CreateFolder 创建文件夹
-// folderName: 文件夹名称
-// pdirFid: 父目录路径或 FID，根目录使用 "/"
 func (qc *QuarkClient) CreateFolder(folderName, pdirFid string) (*StandardResponse, error) {
 	pdirFid = normalizeRootDir(pdirFid)
 
@@ -641,6 +661,9 @@ func (qc *QuarkClient) CreateFolder(folderName, pdirFid string) (*StandardRespon
 
 // Copy 复制文件或目录
 func (qc *QuarkClient) Copy(srcPath, destPath string) (*StandardResponse, error) {
+	srcPath = normalizePath(srcPath)
+	destPath = normalizePath(destPath)
+	
 	// 获取源文件/目录信息
 	srcInfo, err := qc.GetFileInfo(srcPath)
 	if err != nil {
@@ -678,9 +701,22 @@ func (qc *QuarkClient) Copy(srcPath, destPath string) (*StandardResponse, error)
 	switch {
 	case destPath == "" || destPath == srcPath:
 		// 获取源路径的父目录
-		parentPath := filepath.Dir(srcPath)
+		srcPath = normalizePath(srcPath)
+		parentPath := srcPath
+		lastSlash := strings.LastIndex(parentPath, "/")
+		if lastSlash == 0 {
+			parentPath = "/"
+		} else if lastSlash > 0 {
+			parentPath = parentPath[:lastSlash]
+			if parentPath == "" {
+				parentPath = "/"
+			}
+		} else {
+			parentPath = "/"
+		}
+		parentPath = normalizePath(parentPath)
 		switch {
-		case parentPath == "/" || parentPath == ".":
+		case parentPath == "/" || parentPath == "." || parentPath == "":
 			destDir = normalizeRootDir(parentPath)
 		default:
 			parentInfo, err := qc.GetFileInfo(parentPath)
@@ -818,6 +854,9 @@ func (qc *QuarkClient) Copy(srcPath, destPath string) (*StandardResponse, error)
 // srcPath: 源路径（文件或目录）
 // destPath: 目标目录路径（目标目录路径，不是文件路径）
 func (qc *QuarkClient) Move(srcPath, destPath string) (*StandardResponse, error) {
+	srcPath = normalizePath(srcPath)
+	destPath = normalizePath(destPath)
+	
 	// 获取源文件/目录信息
 	srcInfo, err := qc.GetFileInfo(srcPath)
 	if err != nil {
@@ -957,6 +996,8 @@ func (qc *QuarkClient) Move(srcPath, destPath string) (*StandardResponse, error)
 // oldPath: 原路径
 // newName: 新名称
 func (qc *QuarkClient) Rename(oldPath, newName string) (*StandardResponse, error) {
+	oldPath = normalizePath(oldPath)
+	
 	// 获取文件/目录信息
 	fileInfo, err := qc.GetFileInfo(oldPath)
 	if err != nil {
@@ -1109,7 +1150,7 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 				if basePath == "/" {
 					fileInfo.Path = "/" + name
 				} else if basePath != "" {
-					fileInfo.Path = filepath.Join(basePath, name)
+					fileInfo.Path = normalizePath(filepath.Join(basePath, name))
 				} else {
 					fileInfo.Path = "" // 无法确定路径
 				}
@@ -1229,99 +1270,97 @@ func (qc *QuarkClient) List(dirPath string) (*StandardResponse, error) {
 }
 
 // GetFileInfo 获取文件或目录信息
-// remotePath: 文件或目录路径
-// skipPathConversion: 如果为 true，当父目录是路径时，直接使用 listByFid 而不递归调用 GetFileInfo（用于避免循环）
 func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool) (*StandardResponse, error) {
-	shouldSkip := len(skipPathConversion) > 0 && skipPathConversion[0]
+	remotePath = normalizePath(remotePath)
+	
+	if remotePath == "/" || remotePath == "" || remotePath == "." {
+		return &StandardResponse{
+			Success: true,
+			Code:    "OK",
+			Message: "根目录",
+			Data: map[string]interface{}{
+				"fid":          "0",
+				"file_name":    "",
+				"path":         "/",
+				"size":         0,
+				"dir":          true,
+				"is_directory": true,
+			},
+		}, nil
+	}
 
-	// 获取文件名
 	fileName := filepath.Base(remotePath)
-
-	// 获取父目录路径
-	parentPath := filepath.Dir(remotePath)
-	var parentFid string
-	if parentPath == "/" || parentPath == "." {
-		parentFid = normalizeRootDir(parentPath)
-	} else {
-		if shouldSkip {
-			// 跳过路径转换，直接使用 List 方法（List 会处理路径转换）
-			// 但为了避免循环，这里应该直接使用 listByFid
-			// 实际上，如果 skipPathConversion=true，说明这是 List 调用的，parentPath 需要先转换为 FID
-			// 但这样又会循环，所以更好的方式是：如果 skipPathConversion，parentPath 应该已经是 FID
-			// 或者：在 skipPathConversion 模式下，直接使用 List，但 List 会检查并转换
-			parentInfo, err := qc.GetFileInfo(parentPath, true)
-			if err != nil {
-				return &StandardResponse{
-					Success: false,
-					Code:    "GET_PARENT_DIRECTORY_ERROR",
-					Message: fmt.Sprintf("failed to get parent directory: %v", err),
-					Data:    nil,
-				}, nil
-			}
-			if !parentInfo.Success {
-				return &StandardResponse{
-					Success: false,
-					Code:    parentInfo.Code,
-					Message: fmt.Sprintf("failed to get parent directory: %s", parentInfo.Message),
-					Data:    nil,
-				}, nil
-			}
-			fid, ok := parentInfo.Data["fid"].(string)
-			if !ok || fid == "" {
-				return &StandardResponse{
-					Success: false,
-					Code:    "INVALID_PARENT_DIRECTORY_INFO",
-					Message: "parent directory info is invalid: fid not found or empty",
-					Data:    nil,
-				}, nil
-			}
-			parentFid = fid
+	if fileName == "." || fileName == "/" {
+		parts := strings.Split(strings.Trim(remotePath, "/"), "/")
+		if len(parts) > 0 && parts[len(parts)-1] != "" {
+			fileName = parts[len(parts)-1]
 		} else {
-			// 正常流程：获取父目录信息
-			parentInfo, err := qc.GetFileInfo(parentPath, true) // 传入 true 避免循环
-			if err != nil {
-				return &StandardResponse{
-					Success: false,
-					Code:    "GET_PARENT_DIRECTORY_ERROR",
-					Message: fmt.Sprintf("failed to get parent directory: %v", err),
-					Data:    nil,
-				}, nil
-			}
-			if !parentInfo.Success {
-				return &StandardResponse{
-					Success: false,
-					Code:    parentInfo.Code,
-					Message: fmt.Sprintf("failed to get parent directory: %s", parentInfo.Message),
-					Data:    nil,
-				}, nil
-			}
-			// 安全地获取 fid
-			fid, ok := parentInfo.Data["fid"].(string)
-			if !ok || fid == "" {
-				return &StandardResponse{
-					Success: false,
-					Code:    "INVALID_PARENT_DIRECTORY_INFO",
-					Message: "parent directory info is invalid: fid not found or empty",
-					Data:    nil,
-				}, nil
-			}
-			parentFid = fid
+			fileName = ""
 		}
 	}
 
-	// 确定父目录路径用于构建文件路径
-	var parentPathForList string
-	if parentPath == "/" || parentPath == "." {
-		parentPathForList = "/"
-	} else if parentPath != "" {
-		parentPathForList = parentPath
-	} else {
-		// 如果无法确定父目录路径，根据 parentFid 判断
-		if parentFid == "0" {
-			parentPathForList = "/"
-		} else {
-			parentPathForList = ""
+	parentPath := remotePath
+	lastSlash := strings.LastIndex(parentPath, "/")
+	if lastSlash == 0 {
+		parentPath = "/"
+	} else if lastSlash > 0 {
+		parentPath = parentPath[:lastSlash]
+		if parentPath == "" {
+			parentPath = "/"
 		}
+	} else {
+		parentPath = "/"
+	}
+	
+	var parentFid string
+	parentPath = normalizePath(parentPath)
+	if parentPath == "/" || parentPath == "." || parentPath == "" {
+		parentFid = normalizeRootDir(parentPath)
+	} else {
+		if parentPath == remotePath {
+			return &StandardResponse{
+				Success: false,
+				Code:    "INVALID_PATH",
+				Message: fmt.Sprintf("invalid path: parent path equals current path: %s", remotePath),
+				Data:    nil,
+			}, nil
+		}
+		
+		parentInfo, err := qc.GetFileInfo(parentPath, true)
+		if err != nil {
+			return &StandardResponse{
+				Success: false,
+				Code:    "GET_PARENT_DIRECTORY_ERROR",
+				Message: fmt.Sprintf("failed to get parent directory: %v", err),
+				Data:    nil,
+			}, nil
+		}
+		if !parentInfo.Success {
+			return &StandardResponse{
+				Success: false,
+				Code:    parentInfo.Code,
+				Message: fmt.Sprintf("failed to get parent directory: %s", parentInfo.Message),
+				Data:    nil,
+			}, nil
+		}
+		fid, ok := parentInfo.Data["fid"].(string)
+		if !ok || fid == "" {
+			return &StandardResponse{
+				Success: false,
+				Code:    "INVALID_PARENT_DIRECTORY_INFO",
+				Message: "parent directory info is invalid: fid not found or empty",
+				Data:    nil,
+			}, nil
+		}
+		parentFid = fid
+	}
+
+	var parentPathForList string
+	parentPath = normalizePath(parentPath)
+	if parentPath == "/" || parentPath == "." || parentPath == "" {
+		parentPathForList = "/"
+	} else {
+		parentPathForList = parentPath
 	}
 
 	// 使用 listByFid 列出父目录下的文件（避免循环调用）
@@ -1345,7 +1384,6 @@ func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool
 		}, nil
 	}
 
-	// 从响应中提取文件列表
 	listData, ok := listResp.Data["list"]
 	if !ok {
 		return &StandardResponse{
@@ -1356,28 +1394,24 @@ func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool
 		}, nil
 	}
 
-	// 类型断言转换为 []QuarkFileInfo
 	fileList, ok := listData.([]QuarkFileInfo)
 	if !ok {
-		// 尝试从 []interface{} 转换
 		if listInterface, ok := listData.([]interface{}); ok {
 			fileList = make([]QuarkFileInfo, 0, len(listInterface))
 			for _, item := range listInterface {
 				if itemMap, ok := item.(map[string]interface{}); ok {
-					// 手动转换 map 到 QuarkFileInfo
 					var fileInfo QuarkFileInfo
 					if fid, ok := itemMap["fid"].(string); ok {
 						fileInfo.Fid = fid
 					}
 					if name, ok := itemMap["file_name"].(string); ok {
 						fileInfo.Name = name
-						// 构建文件路径：根据父目录路径和文件名
 						if parentPathForList == "/" {
 							fileInfo.Path = "/" + name
 						} else if parentPathForList != "" {
-							fileInfo.Path = filepath.Join(parentPathForList, name)
+							fileInfo.Path = normalizePath(filepath.Join(parentPathForList, name))
 						} else {
-							fileInfo.Path = "" // 无法确定路径
+							fileInfo.Path = ""
 						}
 					} else {
 						fileInfo.Path = ""
@@ -1385,25 +1419,21 @@ func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool
 					if size, ok := itemMap["size"].(float64); ok {
 						fileInfo.Size = int64(size)
 					}
-					// 处理创建时间：优先使用 created_at，其次使用 l_created_at（都是毫秒）
 					if createdAt, ok := itemMap["created_at"].(float64); ok {
-						fileInfo.CreateTime = int64(createdAt) / 1000 // 转换为秒
+						fileInfo.CreateTime = int64(createdAt) / 1000
 					} else if lCreatedAt, ok := itemMap["l_created_at"].(float64); ok {
-						fileInfo.CreateTime = int64(lCreatedAt) / 1000 // 转换为秒
+						fileInfo.CreateTime = int64(lCreatedAt) / 1000
 					}
-					// 处理修改时间：优先使用 updated_at，其次使用 l_updated_at（都是毫秒）
 					if updatedAt, ok := itemMap["updated_at"].(float64); ok {
-						fileInfo.ModifyTime = int64(updatedAt) / 1000 // 转换为秒
+						fileInfo.ModifyTime = int64(updatedAt) / 1000
 					} else if lUpdatedAt, ok := itemMap["l_updated_at"].(float64); ok {
-						fileInfo.ModifyTime = int64(lUpdatedAt) / 1000 // 转换为秒
+						fileInfo.ModifyTime = int64(lUpdatedAt) / 1000
 					}
-					// 处理是否为目录：优先使用 dir，其次使用 file 字段取反
 					if dir, ok := itemMap["dir"].(bool); ok {
 						fileInfo.IsDirectory = dir
 					} else if file, ok := itemMap["file"].(bool); ok {
 						fileInfo.IsDirectory = !file
 					}
-					// download_url 字段在列表API中通常不存在，需要单独获取
 					fileInfo.DownloadURL = ""
 					fileList = append(fileList, fileInfo)
 				}
@@ -1418,7 +1448,6 @@ func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool
 		}
 	}
 
-	// 在列表中查找匹配的文件
 	for _, file := range fileList {
 		if file.Name == fileName {
 			// 找到匹配的文件，构建返回数据
@@ -1452,8 +1481,9 @@ func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool
 }
 
 // Delete 删除文件或目录
-// remotePath: 文件或目录路径
 func (qc *QuarkClient) Delete(remotePath string) (*StandardResponse, error) {
+	remotePath = normalizePath(remotePath)
+	
 	// 获取文件信息以获取文件 ID
 	fileInfo, err := qc.GetFileInfo(remotePath)
 	if err != nil {
