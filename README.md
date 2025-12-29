@@ -4,18 +4,18 @@
 
 夸克网盘文件管理 CLI 工具。
 
-## 🌟 开源说明
+## 开源说明
 
 本项目采用 **AGPL-3.0 许可证**，完全开源。欢迎贡献代码、报告问题或提出建议。
 
 **重要提示**：本项目禁止商业使用。任何商业使用（包括但不限于 SaaS 服务、商业产品集成等）必须获得明确授权。
 
-- 📦 **源代码**：所有源代码已公开，可在 GitHub 仓库中查看和下载
-- 🔧 **构建**：使用 `build.sh` 脚本可以自行编译各平台的二进制文件
-- 🤝 **贡献**：欢迎提交 Pull Request 或 Issue
-- 📝 **文档**：项目文档和代码注释持续完善中
+- **源代码**：所有源代码已公开，可在 GitHub 仓库中查看和下载
+- **构建**：使用 `build.sh` 脚本可以自行编译各平台的二进制文件
+- **贡献**：欢迎提交 Pull Request 或 Issue
+- **文档**：项目文档和代码注释持续完善中
 
-## 📋 目录
+## 目录
 
 - [开源说明](#-开源说明)
 - [功能特性](#-功能特性)
@@ -29,7 +29,7 @@
 - [免责声明](#-免责声明)
 - [许可证](#-许可证)
 
-## ✨ 功能特性
+## 功能特性
 
 - **用户信息**: 获取用户信息
 - **文件列表**: 列出夸克网盘指定目录下的所有文件和子目录
@@ -42,132 +42,46 @@
 - **分享功能**: 创建分享链接，支持设置有效期和提取码；取消分享，支持通过 share_id 或文件路径取消分享
 - **CLI 工具**: 提供命令行工具，方便其他进程调用
 
-## 🔧 系统要求
+## 系统要求
 
 - Linux / macOS / Windows 操作系统
 - 有效的夸克网盘账号和 Cookie
 
-## 📦 安装
+## 安装
 
-### 方式一：从源码构建
+### 从源码构建
 
-**系统要求**：
-- Go 1.18 或更高版本
-- Git
-
-**构建步骤**：
+需要 Go 1.18+ 和 Git。
 
 ```bash
-# 1. 克隆仓库
 git clone https://github.com/zhangjingwei/kuake_sdk.git
 cd kuake_sdk
-
-# 2. 运行构建脚本
 chmod +x build.sh
 ./build.sh
-
-# 3. 构建完成后，二进制文件在 dist/ 目录中
 ```
 
-### 方式二：下载预编译二进制文件
+构建完成后，二进制文件在 `dist/` 目录中。
 
-从 [Releases](https://github.com/zhangjingwei/kuake_sdk/releases) 页面下载对应平台的二进制文件：
+### 下载预编译二进制文件
 
-文件名格式：`kuake-{version}-{os}-{arch}` 或 `kuake-{version}-{os}-{arch}.exe`（Windows）
+从 [Releases](https://github.com/zhangjingwei/kuake_sdk/releases) 页面下载对应平台的二进制文件。
 
-- **Linux**: `kuake-{version}-linux-amd64`
-- **macOS**: `kuake-{version}-darwin-amd64`
-- **Windows**: `kuake-{version}-windows-amd64.exe`
-
-**安装步骤**：
-
-#### Linux
-
+**Linux/macOS**:
 ```bash
-# 1. 下载二进制文件
-# 方式A：下载最新版本
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.2-linux-amd64
-
-# 方式B：下载指定版本
-# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.2/kuake-v1.3.2-linux-amd64
-
-# 2. 添加执行权限
-chmod +x kuake-v1.3.2-linux-amd64
-
-# 3. 下载配置文件示例（可选）
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json
-
-# 4. 编辑配置文件，填入您的 Cookie
-# 使用文本编辑器打开 config.json，替换示例值
-
-# 5. 使用方式（方式A：直接使用）
-./kuake-v1.3.2-linux-amd64 user
-
-# 5. 使用方式（方式B：移动到 PATH，推荐）
-sudo mv kuake-v1.3.2-linux-amd64 /usr/local/bin/kuake
-kuake user
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.3-linux-amd64
+chmod +x kuake-v1.3.3-linux-amd64
+./kuake-v1.3.3-linux-amd64 user
 ```
 
-#### macOS
-
-```bash
-# 1. 下载二进制文件
-# 方式A：下载最新版本
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.2-darwin-amd64
-# 或使用 curl
-curl -L -o kuake-v1.3.2-darwin-amd64 https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.2-darwin-amd64
-
-# 方式B：下载指定版本
-# wget https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.2/kuake-v1.3.2-darwin-amd64
-
-# 2. 添加执行权限
-chmod +x kuake-v1.3.2-darwin-amd64
-
-# 3. 下载配置文件示例（可选）
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json
-# 或使用 curl
-curl -L -o config.json https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json
-
-# 4. 编辑配置文件，填入您的 Cookie
-# 使用文本编辑器打开 config.json，替换示例值
-
-# 5. 使用方式（方式A：直接使用）
-./kuake-v1.3.2-darwin-amd64 user
-
-# 5. 使用方式（方式B：移动到 PATH，推荐）
-sudo mv kuake-v1.3.2-darwin-amd64 /usr/local/bin/kuake
-kuake user
-```
-
-#### Windows
-
+**Windows**:
 ```powershell
-# 1. 下载二进制文件
-# 方式A：下载最新版本
-Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.2-windows-amd64.exe" -OutFile "kuake-v1.3.2-windows-amd64.exe"
-
-# 方式B：下载指定版本
-# Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/download/v1.3.2/kuake-v1.3.2-windows-amd64.exe" -OutFile "kuake-v1.3.2-windows-amd64.exe"
-
-# 2. 下载配置文件示例（可选）
-Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/config.json" -OutFile "config.json"
-
-# 3. 编辑配置文件，填入您的 Cookie
-# 使用文本编辑器打开 config.json，替换示例值
-
-# 4. 使用方式（在 PowerShell 或 CMD 中）
-.\kuake-v1.3.2-windows-amd64.exe user
+Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.3-windows-amd64.exe" -OutFile "kuake-v1.3.3-windows-amd64.exe"
+.\kuake-v1.3.3-windows-amd64.exe user
 ```
 
-## 🚀 快速开始
+## 快速开始
 
 ### 1. 创建配置文件
-
-**方式一：从 Release 下载示例配置文件**
-
-从 [Releases](https://github.com/zhangjingwei/kuake_sdk/releases/latest) 页面下载 `config.json` 示例文件，然后编辑填入您的 Cookie。
-
-**方式二：手动创建配置文件**
 
 创建 `config.json` 文件：
 
@@ -181,30 +95,17 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 }
 ```
 
-**如何获取 Cookie**：
-1. 打开浏览器，登录夸克网盘
-2. 打开开发者工具（F12）
-3. 在 Network 标签页中，找到任意一个请求
-4. 复制请求头中的 `Cookie` 值（完整的 Cookie 字符串）
-5. 将 Cookie 值粘贴到 `config.json` 文件的 `access_tokens` 数组中
+**如何获取 Cookie**：登录夸克网盘，打开开发者工具（F12），在 Network 标签页中复制任意请求的 Cookie 值，粘贴到 `access_tokens` 数组中。
 
 ### 2. 使用 CLI 工具
 
 ```bash
-# 获取用户信息
-./kuake-v1.3.2-linux-amd64 user
-
-# 上传文件
-./kuake-v1.3.2-linux-amd64 upload "file.txt" "/file.txt"
-
-# 列出目录
-./kuake-v1.3.2-linux-amd64 list "/"
-
-# 查看帮助
-./kuake-v1.3.2-linux-amd64 help
+./kuake-v1.3.3-linux-amd64 user
+./kuake-v1.3.3-linux-amd64 upload "file.txt" "/file.txt"
+./kuake-v1.3.3-linux-amd64 list "/"
 ```
 
-## ⚙️ 配置说明
+## 配置说明
 
 ### 配置文件格式
 
@@ -230,7 +131,7 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 - `.gitignore` 文件已包含 `config.json`，确保不会被意外提交
 - 请妥善保管您的 Cookie，不要分享给他人
 
-## 💻 CLI 工具使用
+## CLI 工具使用
 
 ### 基本用法
 
@@ -358,97 +259,38 @@ kuake <command> [config.json] [arguments...]
 - Windows 用户需要添加 `.exe` 扩展名并使用 `.\` 前缀
 - 如果已添加到 PATH，可以直接使用 `kuake` 命令
 
-## 📝 变更日志
+## 变更日志
 
-### v1.3.2 (最新更新)
+### v1.3.3
 
-#### ✨ 新功能
+- 修复 Windows 路径处理问题，支持跨平台路径兼容性
+- 添加路径标准化函数，统一处理 Windows/Unix 路径格式
+- 修复文件操作函数中的路径处理问题
+- 新增路径处理相关测试用例
 
-1. **取消分享功能** (`sdk/share.go`, `cmd/main.go`)
-   - 新增 `DeleteShare` 方法，支持通过 share_id 取消分享
-   - 新增 `GetMyShareList` 方法，获取用户的分享列表
-   - 新增 `GetShareIDByFid` 方法，通过文件 fid 从分享列表中查找 share_id
-   - CLI 新增 `share-delete` 命令，支持通过 share_id 或文件路径取消分享
-   - 支持通过文件路径自动查找并删除对应的分享
+### v1.3.2
+
+- 新增取消分享功能，支持通过 share_id 或文件路径取消分享
+- 新增 `share-delete` CLI 命令
 
 ### v1.3.1
 
-#### 🐛 Bug 修复
-
-1. **错误消息转义问题修复** (`cmd/main.go`)
-   - 修复了 CLI 错误消息中双引号在 JSON 输出时被转义的问题
-   - 将所有错误消息示例从双引号改为单引号，避免 JSON 编码时的转义问题
-   - 影响的命令：`upload`, `create`, `info`, `move`, `copy`, `rename`, `delete`, `download`
-
-2. **API 错误响应处理优化** (`sdk/quark_client.go`)
-   - 改进了 HTTP 错误响应的处理逻辑
-   - 现在会尝试解析 JSON 响应体，提取具体的错误消息（`message`、`errmsg`、`code` 字段）
-   - 如果无法解析 JSON，会返回原始响应体的前 500 个字符
-   - 错误消息更加清晰，便于调试和定位问题
-
-3. **类型断言安全性修复** (`sdk/file.go`, `sdk/share.go`)
-   - 修复了多处直接类型断言可能导致 panic 的问题
-   - 在 `CreateFolder`、`UploadFile`、`CreateShare` 等方法中添加了安全的类型检查和错误处理
-   - 确保在访问 `Data["fid"]` 等字段前先检查响应是否成功，以及字段是否存在
-
-#### ✨ 新功能
-
-1. **完整的单元测试套件**
-   - 新增 `sdk/config_test.go` - 配置文件加载和保存的测试
-   - 新增 `sdk/quark_client_test.go` - 客户端初始化和基础方法的测试
-   - 新增 `sdk/user_test.go` - 用户信息获取的测试
-   - 新增 `sdk/file_test.go` - 文件操作相关测试
-   - 新增 `sdk/share_test.go` - 分享功能相关测试
-   - 新增 `sdk/TEST_README.md` - 测试说明文档
-
-2. **测试覆盖**
-   - 单元测试：覆盖不依赖外部资源的函数（如 `normalizeRootDir`, `parseCookie`, `ConvertToFileInfo`）
-   - 集成测试框架：为需要网络和 API 的测试提供了测试框架（标记为 `t.Skip()`）
-   - 表驱动测试：使用表驱动测试提高测试覆盖率
-
-#### 🔧 代码改进
-
-1. **错误处理增强**
-   - 在 `quark_client.go` 的错误处理中添加了详细的注释说明
-   - 改进了错误消息的可读性和信息量
-
-2. **代码质量**
-   - 所有测试用例通过编译和运行
-   - 修复了潜在的 nil 指针解引用问题
-   - 提高了代码的健壮性和安全性
-
-#### 📚 文档更新
-
-1. **测试文档**
-   - 新增 `sdk/TEST_README.md`，详细说明如何运行测试
-   - 包含测试用例列表、运行方法、覆盖率查看等说明
-
-#### 🔍 测试统计
-
-- **测试文件数量**: 5 个
-- **测试函数数量**: 30+ 个
-- **代码覆盖率**: 约 5.9%（单元测试部分，集成测试被跳过）
-
-#### 📋 详细变更文件列表
-
-- `sdk/quark_client.go` - 错误处理优化，添加错误消息提取逻辑
-- `cmd/main.go` - 修复错误消息转义问题（8 处修改）
-- `sdk/file.go` - 修复类型断言安全问题（2 处修改）
-- `sdk/share.go` - 修复类型断言安全问题（1 处修改）
-- `sdk/config_test.go` - 新增配置文件测试
-- `sdk/quark_client_test.go` - 新增客户端测试
-- `sdk/user_test.go` - 新增用户信息测试
-- `sdk/file_test.go` - 新增文件操作测试
-- `sdk/share_test.go` - 新增分享功能测试
-- `sdk/TEST_README.md` - 新增测试文档
+- 修复 CLI 错误消息转义问题
+- 优化 API 错误响应处理
+- 修复类型断言安全性问题
+- 新增完整的单元测试套件
 
 ---
 
-## ⚠️ 注意事项
+## 注意事项
 
 - **文件名格式**：二进制文件名包含版本号，格式为 `kuake-{version}-{os}-{arch}` 或 `kuake-{version}-{os}-{arch}.exe`（Windows）
 - **执行权限**：Linux/macOS 二进制文件已包含执行权限，可直接使用 `./` 前缀执行
 - **路径参数**：所有路径参数必须用引号包裹（包含空格或特殊字符时），例如：`"./file name.txt"`、`"/path/to/file"`
+- **跨平台路径支持**：
+  - Windows 用户可以使用 Windows 风格的路径（`d:\a\b\c`），会自动转换为 Unix 风格
+  - Linux/macOS 用户继续使用标准 Unix 路径格式（`/a/b/c`）
+  - 所有路径最终都会标准化为 Unix 风格，确保跨平台一致性
 - **配置文件**：
   - 默认配置文件路径：`config.json`（当前目录）
   - 配置文件参数是可选的，放在命令之后、其他参数之前
@@ -464,7 +306,7 @@ kuake <command> [config.json] [arguments...]
   - 上传进度、帮助信息和序列化错误输出到 stderr，不会混入 JSON 输出
   - 成功时退出码为 0，失败时为 1
 
-## ⚖️ 免责声明
+## 免责声明
 
 **重要提示：请在使用本工具前仔细阅读并完全理解本免责声明。使用本工具即表示您已阅读、理解并完全同意本免责声明的所有条款。**
 
@@ -597,15 +439,15 @@ kuake <command> [config.json] [arguments...]
 
 **使用本工具即表示您已充分理解并完全同意上述所有条款。如果您不同意本免责声明的任何内容，请立即停止使用本工具。项目维护者不对因使用本工具导致的任何损失、损害或法律后果承担任何责任。**
 
-## 📄 许可证
+## 许可证
 
 本项目采用 **AGPL-3.0 许可证**。详情请参阅 [LICENSE](LICENSE) 文件。
 
 **许可证要点**：
-- ✅ 允许：学习、研究、修改、分发
-- ✅ 允许：个人和非商业使用
-- ❌ 禁止：商业使用（包括 SaaS 服务、商业产品集成等）
-- 📋 要求：使用本项目的衍生作品也必须采用 AGPL-3.0 许可证并开源
+- 允许：学习、研究、修改、分发
+- 允许：个人和非商业使用
+- 禁止：商业使用（包括 SaaS 服务、商业产品集成等）
+- 要求：使用本项目的衍生作品也必须采用 AGPL-3.0 许可证并开源
 
 **商业使用授权**：如需商业使用，请联系项目维护者获得授权。
 

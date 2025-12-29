@@ -18,7 +18,7 @@ const (
 )
 
 // Version 版本号
-var Version = "v1.3.2"
+var Version = "v1.3.3"
 
 type CLIResult struct {
 	Success bool                   `json:"success"`
