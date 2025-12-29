@@ -47,7 +47,7 @@ build() {
     
     echo -e "${YELLOW}Building ${os}/${arch} (version: ${VERSION})${tags:+ (tags: $tags)}...${NC}"
     
-    local build_cmd="GOOS=$os GOARCH=$arch go build -ldflags=\"-s -w\""
+    local build_cmd="GOOS=$os GOARCH=$arch go build -trimpath -ldflags=\"-s -w\""
     if [ -n "$tags" ]; then
         build_cmd="$build_cmd -tags=\"$tags\""
     fi
