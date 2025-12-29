@@ -1,0 +1,51 @@
+# 源代码文件
+docs/
+
+# Git 配置文件
+.gitignore
+push.sh
+
+# 配置文件（包含敏感信息）
+config.json
+
+# 编译文件和构建产物（通过 GitHub Release 发布，不提交到仓库）
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+kuake_sdk
+kuake_sdk_local
+kuake_sdk_quark
+kuake
+main
+dist/
+
+# 测试文件
+*.test
+*.out
+test_*.go
+test_*.bin
+test_*.txt
+
+# 下载的文件
+downloaded_*.txt
+
+# 存储目录
+storage/
+
+# IDE
+.vscode/
+.gitignore
+.github/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+RELEASE.md
+RELEASE_NOTES_*.md
+release.yml
