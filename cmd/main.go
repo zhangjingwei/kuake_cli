@@ -18,7 +18,7 @@ const (
 )
 
 // Version 版本号
-var Version = "v1.3.3"
+var Version = "v1.3.4"
 
 type CLIResult struct {
 	Success bool                   `json:"success"`
@@ -766,4 +766,3 @@ func handleShareDelete(client *sdk.QuarkClient, args []string) *CLIResult {
 		Data:    resultData,
 	}
 }
-

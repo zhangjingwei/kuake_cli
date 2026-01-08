@@ -68,15 +68,15 @@ chmod +x build.sh
 
 **Linux/macOS**:
 ```bash
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.3-linux-amd64
-chmod +x kuake-v1.3.3-linux-amd64
-./kuake-v1.3.3-linux-amd64 user
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.4-linux-amd64
+chmod +x kuake-v1.3.4-linux-amd64
+./kuake-v1.3.4-linux-amd64 user
 ```
 
 **Windows**:
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.3-windows-amd64.exe" -OutFile "kuake-v1.3.3-windows-amd64.exe"
-.\kuake-v1.3.3-windows-amd64.exe user
+Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.4-windows-amd64.exe" -OutFile "kuake-v1.3.4-windows-amd64.exe"
+.\kuake-v1.3.4-windows-amd64.exe user
 ```
 
 ## 快速开始
@@ -100,9 +100,9 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 ### 2. 使用 CLI 工具
 
 ```bash
-./kuake-v1.3.3-linux-amd64 user
-./kuake-v1.3.3-linux-amd64 upload "file.txt" "/file.txt"
-./kuake-v1.3.3-linux-amd64 list "/"
+./kuake-v1.3.4-linux-amd64 user
+./kuake-v1.3.4-linux-amd64 upload "file.txt" "/file.txt"
+./kuake-v1.3.4-linux-amd64 list "/"
 ```
 
 ## 配置说明
@@ -260,6 +260,12 @@ kuake <command> [config.json] [arguments...]
 - 如果已添加到 PATH，可以直接使用 `kuake` 命令
 
 ## 变更日志
+
+### v1.3.4
+
+- 修复配置文件读取路径问题：相对路径现在相对于可执行文件所在目录解析，而不是当前工作目录
+- 支持从可执行文件所在目录读取和保存配置文件，无论从哪个目录执行命令
+- 保持对绝对路径配置文件的完全支持
 
 ### v1.3.3
 
