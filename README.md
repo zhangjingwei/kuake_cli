@@ -155,6 +155,7 @@ kuake <command> [config.json] [arguments...]
 | `delete <path>` | 删除文件/文件夹 | `kuake delete "/file.txt"` |
 | `share <path> <days> <passcode>` | 创建分享链接 | `kuake share "/file.txt" 7 "false"` |
 | `share-delete <share_id_or_path> [share_id_or_path2] ...` | 取消分享（支持通过 share_id 或文件路径） | `kuake share-delete "fdd8bfd93f21491ab80122538bec310d"` 或 `kuake share-delete "/file.txt"` |
+| `share-list [page] [size] [orderField] [orderType]` | 获取我的分享列表 | `kuake share-list` 或 `kuake share-list 1 50 "created_at" "desc"` |
 | `help` | 显示帮助信息 | `kuake help` |
 
 **重要提示**：
@@ -250,6 +251,12 @@ kuake <command> [config.json] [arguments...]
 # 同时取消多个分享
 ./kuake-{version}-{os}-{arch} share-delete "share_id1" "share_id2" "/file.txt"
 
+# 获取我的分享列表（使用默认参数）
+./kuake-{version}-{os}-{arch} share-list
+
+# 获取我的分享列表（指定分页和排序参数）
+./kuake-{version}-{os}-{arch} share-list 1 50 "created_at" "desc"
+
 # 查看帮助
 ./kuake-{version}-{os}-{arch} help
 ```
@@ -260,6 +267,13 @@ kuake <command> [config.json] [arguments...]
 - 如果已添加到 PATH，可以直接使用 `kuake` 命令
 
 ## 变更日志
+
+### v1.3.5
+
+- 修复 list 命令只返回10个条目的问题：使用正确的API接口 `/1/clouddrive/file/sort` 并实现分页功能
+- 优化字段映射：根据实际API响应精准映射所有字段，支持多种数据类型
+- 新增 `share-list` 命令：获取我的分享列表，支持分页和排序参数
+- 改进分页逻辑：自动循环获取所有数据，不再受限于单次请求的数量限制
 
 ### v1.3.4
 

@@ -18,7 +18,7 @@ const (
 )
 
 // Version 版本号
-var Version = "v1.3.4"
+var Version = "v1.3.5"
 
 type CLIResult struct {
 	Success bool                   `json:"success"`
@@ -84,6 +84,8 @@ func main() {
 		result = handleShareCreate(client, args)
 	case "share-delete":
 		result = handleShareDelete(client, args)
+	case "share-list":
+		result = handleShareList(client, args)
 	case "help", "-h", "--help":
 		printUsage()
 		os.Exit(ExitSuccess)
@@ -126,6 +128,11 @@ Commands:
                                 days: 0=permanent, 1/7/30=days
                                 passcode: "true" or "false"
   share-delete <share_id_or_path>...  Delete share(s) by share ID(s) or file path(s)
+  share-list [page] [size] [orderField] [orderType]  Get my share list
+                                page: page number (default: 1)
+                                size: page size (default: 50)
+                                orderField: sort field (default: "created_at")
+                                orderType: "asc" or "desc" (default: "desc")
   help                           Show help
 
 Examples:
@@ -139,6 +146,8 @@ Examples:
   kuake share "/file.txt" 7 "false"
   kuake share-delete "fdd8bfd93f21491ab80122538bec310d"
   kuake share-delete "/file.txt"
+  kuake share-list
+  kuake share-list 1 50 "created_at" "desc"
 
 Notes:
   - All path parameters must be quoted
@@ -764,5 +773,46 @@ func handleShareDelete(client *sdk.QuarkClient, args []string) *CLIResult {
 		Code:    "OK",
 		Message: "Share deleted successfully",
 		Data:    resultData,
+	}
+}
+
+// handleShareList 处理获取我的分享列表命令
+func handleShareList(client *sdk.QuarkClient, args []string) *CLIResult {
+	// 解析参数，支持可选参数
+	page := 1
+	size := 50
+	orderField := "created_at"
+	orderType := "desc"
+
+	if len(args) > 0 {
+		if p, err := strconv.Atoi(args[0]); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if len(args) > 1 {
+		if s, err := strconv.Atoi(args[1]); err == nil && s > 0 {
+			size = s
+		}
+	}
+	if len(args) > 2 {
+		orderField = args[2]
+	}
+	if len(args) > 3 {
+		orderType = args[3]
+	}
+
+	shareList, err := client.GetMyShareList(page, size, orderField, orderType)
+	if err != nil {
+		return &CLIResult{
+			Success: false,
+			Message: err.Error(),
+		}
+	}
+
+	return &CLIResult{
+		Success: true,
+		Code:    "OK",
+		Message: "Get share list successfully",
+		Data:    shareList,
 	}
 }

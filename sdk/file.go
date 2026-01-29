@@ -1083,48 +1083,8 @@ func (qc *QuarkClient) Rename(oldPath, newName string) (*StandardResponse, error
 }
 
 // listByFid 通过 FID 列出目录下的文件（内部方法，避免循环调用）
+// 支持分页，自动获取所有文件
 func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*StandardResponse, error) {
-	// 构建查询参数
-	params := url.Values{}
-	params.Set("pdir_fid", pdirFid)
-	params.Set("limit", "100")
-	params.Set("force", "0")
-	params.Set("order", "file_type")
-	params.Set("asc", "0")
-
-	// 构建完整 URL
-	endpoint := CREATE_FOLDER + "?" + params.Encode()
-	respMap, err := qc.makeRequest("GET", endpoint, nil, nil)
-	if err != nil {
-		return &StandardResponse{
-			Success: false,
-			Code:    "LIST_REQUEST_ERROR",
-			Message: fmt.Sprintf("list request failed: %v", err),
-			Data:    nil,
-		}, nil
-	}
-
-	// 解析响应数据
-	data, ok := respMap["data"].(map[string]interface{})
-	if !ok {
-		return &StandardResponse{
-			Success: false,
-			Code:    "INVALID_RESPONSE_FORMAT",
-			Message: "invalid response format: data field not found",
-			Data:    nil,
-		}, nil
-	}
-
-	listData, ok := data["list"].([]interface{})
-	if !ok {
-		return &StandardResponse{
-			Success: false,
-			Code:    "INVALID_LIST_FORMAT",
-			Message: "invalid list format in response",
-			Data:    nil,
-		}, nil
-	}
-
 	// 确定父目录路径：如果提供了 parentPath，使用它；否则根据 pdirFid 判断
 	var basePath string
 	if len(parentPath) > 0 && parentPath[0] != "" {
@@ -1136,76 +1096,179 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 		basePath = ""
 	}
 
-	// 转换文件列表，正确映射所有字段
-	fileList := make([]QuarkFileInfo, 0, len(listData))
-	for _, item := range listData {
-		if itemMap, ok := item.(map[string]interface{}); ok {
-			var fileInfo QuarkFileInfo
-			if fid, ok := itemMap["fid"].(string); ok {
-				fileInfo.Fid = fid
-			}
-			if name, ok := itemMap["file_name"].(string); ok {
-				fileInfo.Name = name
-				// 构建文件路径：根据父目录路径和文件名
-				if basePath == "/" {
-					fileInfo.Path = "/" + name
-				} else if basePath != "" {
-					fileInfo.Path = normalizePath(filepath.Join(basePath, name))
-				} else {
-					fileInfo.Path = "" // 无法确定路径
-				}
-			} else {
-				fileInfo.Path = ""
-			}
-			if size, ok := itemMap["size"].(float64); ok {
-				fileInfo.Size = int64(size)
-			}
-			// 处理创建时间：优先使用 created_at，其次使用 l_created_at（都是毫秒）
-			if createdAt, ok := itemMap["created_at"].(float64); ok {
-				fileInfo.CreatedAt = int64(createdAt)
-				fileInfo.CreateTime = int64(createdAt) / 1000 // 转换为秒
-			} else if lCreatedAt, ok := itemMap["l_created_at"].(float64); ok {
-				fileInfo.LCreatedAt = int64(lCreatedAt)
-				fileInfo.CreateTime = int64(lCreatedAt) / 1000 // 转换为秒
-			}
-			// 处理修改时间：优先使用 updated_at，其次使用 l_updated_at（都是毫秒）
-			if updatedAt, ok := itemMap["updated_at"].(float64); ok {
-				fileInfo.UpdatedAt = int64(updatedAt)
-				fileInfo.ModifyTime = int64(updatedAt) / 1000 // 转换为秒
-			} else if lUpdatedAt, ok := itemMap["l_updated_at"].(float64); ok {
-				fileInfo.LUpdatedAt = int64(lUpdatedAt)
-				fileInfo.ModifyTime = int64(lUpdatedAt) / 1000 // 转换为秒
-			}
-			// 处理是否为目录：优先使用 dir，其次使用 file 字段取反
-			if dir, ok := itemMap["dir"].(bool); ok {
-				fileInfo.IsDirectory = dir
-			} else if file, ok := itemMap["file"].(bool); ok {
-				fileInfo.IsDirectory = !file
-			}
-			// download_url 字段在列表API中通常不存在，需要单独获取
-			fileInfo.DownloadURL = ""
-			fileList = append(fileList, fileInfo)
-		}
-	}
+	// 用于存储所有文件的列表
+	allFileList := make([]QuarkFileInfo, 0)
+	page := 1
+	pageSize := 50 // 每页大小
+	hasMore := true
 
-	// 检查状态码
-	status, _ := respMap["status"].(float64)
-	code, _ := respMap["code"].(float64)
-	if status >= 400 || code != 0 {
-		message, _ := respMap["message"].(string)
-		return &StandardResponse{
-			Success: false,
-			Code:    "LIST_FAILED",
-			Message: fmt.Sprintf("list files failed: %s (status: %.0f, code: %.0f)", message, status, code),
-			Data:    nil,
-		}, nil
+	// 循环获取所有数据
+	for hasMore {
+		// 构建查询参数
+		params := url.Values{}
+		params.Set("uc_param_str", "")
+		params.Set("pdir_fid", pdirFid)
+		params.Set("_page", fmt.Sprintf("%d", page))
+		params.Set("_size", fmt.Sprintf("%d", pageSize))
+		params.Set("_fetch_total", "1")
+		params.Set("_fetch_sub_dirs", "0")
+		params.Set("_sort", "file_type:asc,updated_at:desc")
+		params.Set("fetch_all_file", "1")
+		params.Set("fetch_risk_file_name", "1")
+
+		// 构建完整 URL
+		endpoint := FILE_SORT + "?" + params.Encode()
+		respMap, err := qc.makeRequest("GET", endpoint, nil, nil)
+		if err != nil {
+			return &StandardResponse{
+				Success: false,
+				Code:    "LIST_REQUEST_ERROR",
+				Message: fmt.Sprintf("list request failed: %v", err),
+				Data:    nil,
+			}, nil
+		}
+
+		// 检查状态码
+		status, _ := respMap["status"].(float64)
+		code, _ := respMap["code"].(float64)
+		if status >= 400 || code != 0 {
+			message, _ := respMap["message"].(string)
+			return &StandardResponse{
+				Success: false,
+				Code:    "LIST_FAILED",
+				Message: fmt.Sprintf("list files failed: %s (status: %.0f, code: %.0f)", message, status, code),
+				Data:    nil,
+			}, nil
+		}
+
+		// 解析响应数据
+		data, ok := respMap["data"].(map[string]interface{})
+		if !ok {
+			return &StandardResponse{
+				Success: false,
+				Code:    "INVALID_RESPONSE_FORMAT",
+				Message: "invalid response format: data field not found",
+				Data:    nil,
+			}, nil
+		}
+
+		listData, ok := data["list"].([]interface{})
+		if !ok {
+			return &StandardResponse{
+				Success: false,
+				Code:    "INVALID_LIST_FORMAT",
+				Message: "invalid list format in response",
+				Data:    nil,
+			}, nil
+		}
+
+		// 如果本次返回的数据为空，说明已经获取了所有数据
+		if len(listData) == 0 {
+			hasMore = false
+			break
+		}
+
+		// 转换文件列表，根据实际API响应精准映射所有字段
+		for _, item := range listData {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				var fileInfo QuarkFileInfo
+				
+				// 映射 fid (文件ID)
+				if fid, ok := itemMap["fid"].(string); ok {
+					fileInfo.Fid = fid
+				}
+				
+				// 映射 file_name (文件名)
+				if name, ok := itemMap["file_name"].(string); ok {
+					fileInfo.Name = name
+					// 构建文件路径：根据父目录路径和文件名
+					if basePath == "/" {
+						fileInfo.Path = "/" + name
+					} else if basePath != "" {
+						fileInfo.Path = normalizePath(filepath.Join(basePath, name))
+					} else {
+						fileInfo.Path = "" // 无法确定路径
+					}
+				} else {
+					fileInfo.Path = ""
+				}
+				
+				// 映射 size (文件大小，可能是 float64 或 int)
+				if size, ok := itemMap["size"].(float64); ok {
+					fileInfo.Size = int64(size)
+				} else if size, ok := itemMap["size"].(int); ok {
+					fileInfo.Size = int64(size)
+				} else if size, ok := itemMap["size"].(int64); ok {
+					fileInfo.Size = size
+				}
+				
+				// 处理创建时间：优先使用 created_at，其次使用 l_created_at（都是毫秒时间戳）
+				if createdAt, ok := itemMap["created_at"].(float64); ok {
+					fileInfo.CreatedAt = int64(createdAt)
+					fileInfo.CreateTime = int64(createdAt) / 1000 // 转换为秒
+				} else if createdAt, ok := itemMap["created_at"].(int64); ok {
+					fileInfo.CreatedAt = createdAt
+					fileInfo.CreateTime = createdAt / 1000
+				} else if lCreatedAt, ok := itemMap["l_created_at"].(float64); ok {
+					fileInfo.LCreatedAt = int64(lCreatedAt)
+					fileInfo.CreateTime = int64(lCreatedAt) / 1000 // 转换为秒
+				} else if lCreatedAt, ok := itemMap["l_created_at"].(int64); ok {
+					fileInfo.LCreatedAt = lCreatedAt
+					fileInfo.CreateTime = lCreatedAt / 1000
+				}
+				
+				// 处理修改时间：优先使用 updated_at，其次使用 l_updated_at（都是毫秒时间戳）
+				if updatedAt, ok := itemMap["updated_at"].(float64); ok {
+					fileInfo.UpdatedAt = int64(updatedAt)
+					fileInfo.ModifyTime = int64(updatedAt) / 1000 // 转换为秒
+				} else if updatedAt, ok := itemMap["updated_at"].(int64); ok {
+					fileInfo.UpdatedAt = updatedAt
+					fileInfo.ModifyTime = updatedAt / 1000
+				} else if lUpdatedAt, ok := itemMap["l_updated_at"].(float64); ok {
+					fileInfo.LUpdatedAt = int64(lUpdatedAt)
+					fileInfo.ModifyTime = int64(lUpdatedAt) / 1000 // 转换为秒
+				} else if lUpdatedAt, ok := itemMap["l_updated_at"].(int64); ok {
+					fileInfo.LUpdatedAt = lUpdatedAt
+					fileInfo.ModifyTime = lUpdatedAt / 1000
+				}
+				
+				// 处理是否为目录：优先使用 dir 字段，其次使用 file 字段取反
+				if dir, ok := itemMap["dir"].(bool); ok {
+					fileInfo.IsDirectory = dir
+				} else if file, ok := itemMap["file"].(bool); ok {
+					fileInfo.IsDirectory = !file
+				}
+				
+				// download_url 字段在列表API中通常不存在，需要单独获取
+				fileInfo.DownloadURL = ""
+				
+				allFileList = append(allFileList, fileInfo)
+			}
+		}
+
+		// 检查是否还有更多数据
+		// 如果返回的数据量少于 pageSize，说明已经获取了所有数据
+		if len(listData) < pageSize {
+			hasMore = false
+		} else {
+			// 检查响应中是否有 total 字段来判断是否还有更多数据
+			if total, ok := data["total"].(float64); ok {
+				currentCount := float64(len(allFileList))
+				hasMore = currentCount < total
+			} else {
+				// 如果没有 total 字段，根据返回的数据量判断
+				// 如果返回的数据量等于 pageSize，可能还有更多数据
+				hasMore = len(listData) == pageSize
+			}
+			page++
+		}
 	}
 
 	return &StandardResponse{
 		Success: true,
 		Code:    "OK",
 		Message: "列出目录成功",
-		Data:    map[string]interface{}{"list": fileList},
+		Data:    map[string]interface{}{"list": allFileList},
 	}, nil
 }
 
