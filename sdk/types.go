@@ -95,6 +95,36 @@ type StandardResponse struct {
 	Data    map[string]interface{} `json:"data"`    // 响应数据
 }
 
+// UploadProgress 上传进度信息
+type UploadProgress struct {
+	Progress     int           `json:"progress"`      // 进度百分比 (0-100)
+	Uploaded     int64         `json:"uploaded"`      // 已上传字节数
+	Total        int64         `json:"total"`         // 总字节数
+	Speed        float64       `json:"speed"`         // 上传速度 (字节/秒)
+	SpeedStr     string        `json:"speed_str"`     // 格式化的速度字符串 (如 "25.5 MB/s")
+	Remaining    time.Duration `json:"remaining"`     // 剩余时间
+	RemainingStr string        `json:"remaining_str"` // 格式化的剩余时间字符串 (如 "2m30s")
+	Elapsed      time.Duration `json:"elapsed"`       // 已用时间
+}
+
+// UploadState 上传状态（用于断点续传）
+type UploadState struct {
+	FilePath     string            `json:"file_path"`      // 本地文件路径
+	DestPath     string            `json:"dest_path"`      // 目标路径
+	FileSize     int64             `json:"file_size"`      // 文件大小
+	UploadID     string            `json:"upload_id"`      // OSS UploadID
+	TaskID       string            `json:"task_id"`        // 任务ID
+	Bucket       string            `json:"bucket"`         // OSS Bucket
+	ObjKey       string            `json:"obj_key"`         // OSS Object Key
+	UploadURL    string            `json:"upload_url"`     // 上传URL
+	PartSize     int64             `json:"part_size"`     // 分片大小
+	UploadedParts map[int]string   `json:"uploaded_parts"` // 已上传的分片：partNumber -> ETag
+	MimeType     string            `json:"mime_type"`     // MIME类型
+	AuthInfo     json.RawMessage   `json:"auth_info"`     // 认证信息
+	Callback     json.RawMessage   `json:"callback"`      // 回调信息
+	CreatedAt    time.Time         `json:"created_at"`     // 创建时间
+}
+
 // PreUploadResponse 预上传响应
 type PreUploadResponse struct {
 	Code   int `json:"code"`

@@ -47,7 +47,7 @@ func NewQuarkClient(configPath string) *QuarkClient {
 		failedTokens:     make(map[int]bool),
 		Debug:            isDebugEnv, // 从环境变量读取，默认关闭
 		HttpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 30 * time.Second, // 普通 API 请求的超时时间，上传请求使用动态超时
 		},
 	}
 	// 解析 cookie

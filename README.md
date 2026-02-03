@@ -68,15 +68,15 @@ chmod +x build.sh
 
 **Linux/macOS**:
 ```bash
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.4-linux-amd64
-chmod +x kuake-v1.3.4-linux-amd64
-./kuake-v1.3.4-linux-amd64 user
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.5-linux-amd64
+chmod +x kuake-v1.3.5-linux-amd64
+./kuake-v1.3.5-linux-amd64 user
 ```
 
 **Windows**:
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.4-windows-amd64.exe" -OutFile "kuake-v1.3.4-windows-amd64.exe"
-.\kuake-v1.3.4-windows-amd64.exe user
+Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.5-windows-amd64.exe" -OutFile "kuake-v1.3.5-windows-amd64.exe"
+.\kuake-v1.3.5-windows-amd64.exe user
 ```
 
 ## 快速开始
@@ -100,9 +100,9 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 ### 2. 使用 CLI 工具
 
 ```bash
-./kuake-v1.3.4-linux-amd64 user
-./kuake-v1.3.4-linux-amd64 upload "file.txt" "/file.txt"
-./kuake-v1.3.4-linux-amd64 list "/"
+./kuake-v1.3.5-linux-amd64 user
+./kuake-v1.3.5-linux-amd64 upload "file.txt" "/file.txt"
+./kuake-v1.3.5-linux-amd64 list "/"
 ```
 
 ## 配置说明
@@ -136,8 +136,12 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 ### 基本用法
 
 ```bash
-kuake <command> [config.json] [arguments...]
+kuake [options] <command> [arguments...]
+kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 ```
+
+**选项**：
+- `-c, --config <path>`: 指定配置文件路径（默认: config.json）
 
 ### 可用命令
 
@@ -270,10 +274,15 @@ kuake <command> [config.json] [arguments...]
 
 ### v1.3.5
 
-- 修复 list 命令只返回10个条目的问题：使用正确的API接口 `/1/clouddrive/file/sort` 并实现分页功能
-- 优化字段映射：根据实际API响应精准映射所有字段，支持多种数据类型
-- 新增 `share-list` 命令：获取我的分享列表，支持分页和排序参数
-- 改进分页逻辑：自动循环获取所有数据，不再受限于单次请求的数量限制
+- **新增断点续传功能**：文件上传支持断点续传，上传中断后可自动恢复，避免重复上传已完成的片段
+- **改进上传进度显示**：上传进度回调现在显示上传速度、剩余时间等详细信息，提供更好的用户体验
+- **优化命令行参数解析**：支持 `-c/--config` 参数指定配置文件路径，改进参数解析逻辑
+- **改进配置文件路径解析**：配置文件路径解析优先使用当前工作目录，对开发模式更友好
+- **增强上传错误处理**：正确处理 OSS 分片已存在错误（409），支持从错误响应中提取 ETag
+- **改进目录创建逻辑**：优化目录创建流程，使用创建后的 FID 直接进行后续操作，提高效率
+- **增强上传超时处理**：为大文件上传设置合理的超时时间（分片上传30分钟，提交5分钟）
+- **改进分享创建错误处理**：分享创建失败时增加重试机制，尝试通过文件 FID 查找已创建的分享
+- **新增上传状态管理**：添加 `UploadProgress` 和 `UploadState` 类型，支持详细的上传进度和状态管理
 
 ### v1.3.4
 

@@ -33,14 +33,58 @@ func main() {
 		os.Exit(ExitError)
 	}
 
-	command := os.Args[1]
-	args := os.Args[2:]
-
-	// 解析全局配置
+	// 解析命令行参数，支持 -c/--config 参数
 	configPath := sdk.DEFAULT_CONFIG_PATH
-	if len(args) > 0 && filepath.Ext(args[0]) == ".json" {
-		configPath = args[0]
-		args = args[1:]
+	var command string
+	var args []string
+	skipNext := false
+
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+
+		if skipNext {
+			skipNext = false
+			continue
+		}
+
+		// 检查是否是配置文件参数
+		if arg == "-c" || arg == "--config" {
+			if i+1 < len(os.Args) {
+				configPath = os.Args[i+1]
+				skipNext = true
+				continue
+			} else {
+				outputJSON(&CLIResult{
+					Success: false,
+					Code:    "INVALID_ARGS",
+					Message: fmt.Sprintf("%s requires a config file path", arg),
+				})
+				os.Exit(ExitError)
+			}
+		}
+
+		// 第一个非配置参数是命令
+		if command == "" {
+			// 检查是否是帮助命令
+			if arg == "help" || arg == "-h" || arg == "--help" {
+				printUsage()
+				os.Exit(ExitSuccess)
+			}
+			command = arg
+		} else {
+			// 后续参数是命令参数
+			// 如果第一个参数是 .json 文件（向后兼容），也作为配置文件
+			if len(args) == 0 && filepath.Ext(arg) == ".json" {
+				configPath = arg
+			} else {
+				args = append(args, arg)
+			}
+		}
+	}
+
+	if command == "" {
+		printUsage()
+		os.Exit(ExitError)
 	}
 
 	// 创建客户端
@@ -111,7 +155,11 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Quark Cloud Drive CLI Tool
 
 Usage:
-  kuake <command> [config.json] [arguments...]
+  kuake [options] <command> [arguments...]
+  kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
+
+Options:
+  -c, --config <path>    Specify config file path (default: config.json)
 
 Commands:
   user                        Get user information
@@ -213,11 +261,20 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 	filePath := args[0]
 	destPath := args[1]
 
-	// 可选：进度回调（静默模式，不输出进度）
-	progressCallback := func(progress int) {
-		// CLI 模式下可以静默，或者输出到 stderr
-		fmt.Fprintf(os.Stderr, "\rUpload progress: %d%%", progress)
-		if progress == 100 {
+	// 进度回调，显示上传进度、速度和剩余时间
+	progressCallback := func(progress *sdk.UploadProgress) {
+		if progress == nil {
+			return
+		}
+		// 输出到 stderr，避免干扰 JSON 输出
+		if progress.SpeedStr == "秒传（文件已存在）" {
+			// 秒传情况，显示特殊提示
+			fmt.Fprintf(os.Stderr, "\r上传进度: %d%% | %s", progress.Progress, progress.SpeedStr)
+		} else {
+			fmt.Fprintf(os.Stderr, "\r上传进度: %d%% | 速度: %s | 剩余: %s", 
+				progress.Progress, progress.SpeedStr, progress.RemainingStr)
+		}
+		if progress.Progress == 100 {
 			fmt.Fprintf(os.Stderr, "\n")
 		}
 	}

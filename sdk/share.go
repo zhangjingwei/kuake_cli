@@ -324,7 +324,37 @@ func (qc *QuarkClient) CreateShare(filePath string, expireDays int, needPasscode
 		var err error
 		shareID, err = qc.waitForTaskComplete(taskID)
 		if err != nil {
-			return nil, fmt.Errorf("wait for task complete failed: %w", err)
+			// 如果查询任务状态失败（可能是401认证错误），但分享可能已经创建成功
+			// 尝试通过 GetShareIDByFid 查找分享ID（因为分享可能已经创建成功）
+			if shareID == "" {
+				// 等待一小段时间，让服务器完成分享创建
+				time.Sleep(1 * time.Second)
+				// 尝试通过文件fid查找share_id
+				foundShareID, findErr := qc.GetShareIDByFid(fid)
+				if findErr == nil && foundShareID != "" {
+					// 成功找到share_id，使用它
+					shareID = foundShareID
+				} else {
+					// 如果找不到share_id，检查是否是401或认证相关错误
+					// 如果是认证错误，说明可能是认证问题，但分享可能已经创建成功
+					errStr := err.Error()
+					if strings.Contains(errStr, "401") || strings.Contains(errStr, "require login") || strings.Contains(errStr, "authentication") {
+						// 等待更长时间后重试一次
+						time.Sleep(2 * time.Second)
+						foundShareID, findErr = qc.GetShareIDByFid(fid)
+						if findErr == nil && foundShareID != "" {
+							shareID = foundShareID
+						} else {
+							// 如果仍然失败，返回错误，但提示分享可能已创建
+							return nil, fmt.Errorf("wait for task complete failed: %w (note: share may have been created successfully, but failed to retrieve share_id due to authentication error)", err)
+						}
+					} else {
+						// 其他错误，直接返回
+						return nil, fmt.Errorf("wait for task complete failed: %w", err)
+					}
+				}
+			}
+			// 如果轮询失败但有 share_id，继续使用它（可能任务已完成但查询接口需要认证）
 		}
 	}
 

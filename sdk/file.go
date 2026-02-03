@@ -2,10 +2,12 @@ package sdk
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"mime"
@@ -16,6 +18,80 @@ import (
 	"strings"
 	"time"
 )
+
+// getUploadStatePath 获取上传状态文件路径
+func getUploadStatePath(filePath, destPath string) string {
+	// 基于文件路径和目标路径生成唯一的状态文件路径
+	hash := md5.Sum([]byte(filePath + "|" + destPath))
+	hashStr := fmt.Sprintf("%x", hash)
+	stateDir := filepath.Join(os.TempDir(), "kuake_upload_state")
+	os.MkdirAll(stateDir, 0755)
+	return filepath.Join(stateDir, hashStr+".json")
+}
+
+// loadUploadState 加载上传状态
+func loadUploadState(statePath string) (*UploadState, error) {
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return nil, err
+	}
+	var state UploadState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// saveUploadState 保存上传状态
+func saveUploadState(statePath string, state *UploadState) error {
+	state.CreatedAt = time.Now()
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(statePath, data, 0644)
+}
+
+// deleteUploadState 删除上传状态文件
+func deleteUploadState(statePath string) error {
+	return os.Remove(statePath)
+}
+
+// formatSpeed 格式化速度字符串
+func formatSpeed(speed float64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+
+	if speed >= GB {
+		return fmt.Sprintf("%.2f GB/s", speed/GB)
+	} else if speed >= MB {
+		return fmt.Sprintf("%.2f MB/s", speed/MB)
+	} else if speed >= KB {
+		return fmt.Sprintf("%.2f KB/s", speed/KB)
+	}
+	return fmt.Sprintf("%.0f B/s", speed)
+}
+
+// formatDuration 格式化时间间隔字符串
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		return "0s"
+	}
+
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+
+	if hours > 0 {
+		return fmt.Sprintf("%dh%dm%ds", hours, minutes, seconds)
+	} else if minutes > 0 {
+		return fmt.Sprintf("%dm%ds", minutes, seconds)
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
 
 // normalizePath 将路径标准化为 Unix 风格（使用 / 作为分隔符）
 func normalizePath(path string) string {
@@ -144,6 +220,12 @@ func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumbe
 	params.Set("uploadId", pre.Data.UploadID)
 	req.URL.RawQuery = params.Encode()
 
+	// 为上传请求设置较长的超时时间（30分钟），主要依赖服务器端响应
+	// 这个超时仅作为安全网，防止网络问题导致的永久挂起
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	req = req.WithContext(ctx)
+
 	// 发送请求
 	resp, err := qc.HttpClient.Do(req)
 	if err != nil {
@@ -153,7 +235,27 @@ func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumbe
 
 	if resp.StatusCode >= 400 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("upload chunk failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		bodyStr := string(bodyBytes)
+
+		// 处理 PartAlreadyExist 错误（409）：分片已存在，从响应中提取 ETag
+		if resp.StatusCode == 409 && strings.Contains(bodyStr, "PartAlreadyExist") {
+			// 解析 XML 响应，提取 PartEtag
+			type OSSError struct {
+				XMLName    xml.Name `xml:"Error"`
+				Code       string   `xml:"Code"`
+				Message    string   `xml:"Message"`
+				PartEtag   string   `xml:"PartEtag"`
+				PartNumber string   `xml:"PartNumber"`
+			}
+			var ossErr OSSError
+			if err := xml.Unmarshal(bodyBytes, &ossErr); err == nil && ossErr.PartEtag != "" {
+				// 移除 ETag 两端的引号（如果有）
+				etag := strings.Trim(ossErr.PartEtag, "\"")
+				return etag, nil
+			}
+		}
+
+		return "", fmt.Errorf("upload chunk failed with status %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	// 从响应头获取 ETag
@@ -230,6 +332,11 @@ func (qc *QuarkClient) upCommit(pre *PreUploadResponse, etags []string) (*Finish
 	params.Set("uploadId", pre.Data.UploadID)
 	req.URL.RawQuery = params.Encode()
 
+	// 为提交上传请求设置较长的超时时间（5分钟），主要依赖服务器端响应
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	req = req.WithContext(ctx)
+
 	// 发送请求
 	commitResp, err := qc.HttpClient.Do(req)
 	if err != nil {
@@ -295,7 +402,8 @@ func (qc *QuarkClient) upFinish(pre *PreUploadResponse) (*FinishResponse, error)
 }
 
 // UploadFile 上传文件到夸克网盘，支持大文件分片上传
-func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback func(int)) (*StandardResponse, error) {
+// progressCallback: 进度回调函数，如果为 nil 则不显示进度
+func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback func(*UploadProgress)) (*StandardResponse, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return &StandardResponse{
@@ -320,6 +428,9 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 	fileSize := fileInfo.Size()
 	localFileName := fileInfo.Name()
 
+	// 记录开始时间，用于计算速度和剩余时间
+	startTime := time.Now()
+
 	destPath = normalizePath(destPath)
 	var destFileName string
 	if strings.HasSuffix(destPath, "/") || filepath.Base(destPath) == "" || filepath.Base(destPath) == "." {
@@ -343,12 +454,14 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}
 	}
 	destDirPath = normalizePath(destDirPath)
-	
+
 	if destDirPath != "/" && destDirPath != "" && destDirPath != "." {
 		destDirInfo, err := qc.GetFileInfo(destDirPath)
-		if err != nil {
+		needCreate := err != nil || (destDirInfo != nil && !destDirInfo.Success && destDirInfo.Code == "FILE_NOT_FOUND")
+		if needCreate {
 			parts := strings.Split(strings.Trim(destDirPath, "/"), "/")
 			currentPath := ""
+			var lastCreatedFid string // 记录最后创建的目录 FID
 			for _, part := range parts {
 				if part == "" {
 					continue
@@ -359,19 +472,16 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 					currentPath = currentPath + "/" + part
 				}
 				currentPath = normalizePath(currentPath)
-				_, err := qc.GetFileInfo(currentPath)
-				if err != nil {
+				checkInfo, err := qc.GetFileInfo(currentPath)
+				needCreatePath := err != nil || (checkInfo != nil && !checkInfo.Success && checkInfo.Code == "FILE_NOT_FOUND")
+				if needCreatePath {
 					parentPathForCreate := "/"
 					if currentPath != "/" && currentPath != "" {
-						lastSlash := strings.LastIndex(currentPath, "/")
-						if lastSlash == 0 {
-							parentPathForCreate = "/"
-						} else if lastSlash > 0 {
-							parentPathForCreate = currentPath[:lastSlash]
+						if lastSlash := strings.LastIndex(currentPath, "/"); lastSlash > 0 {
+							parentPathForCreate = normalizePath(currentPath[:lastSlash])
 						}
 					}
-					parentPathForCreate = normalizePath(parentPathForCreate)
-					_, createErr := qc.CreateFolder(part, parentPathForCreate)
+					createResp, createErr := qc.CreateFolder(part, parentPathForCreate)
 					if createErr != nil {
 						return &StandardResponse{
 							Success: false,
@@ -380,16 +490,45 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 							Data:    nil,
 						}, nil
 					}
+					if createResp == nil || !createResp.Success {
+						msg := "unknown error"
+						if createResp != nil {
+							msg = createResp.Message
+						}
+						return &StandardResponse{
+							Success: false,
+							Code:    "CREATE_DIRECTORY_ERROR",
+							Message: fmt.Sprintf("failed to create directory %s: %s", currentPath, msg),
+							Data:    nil,
+						}, nil
+					}
+					// 如果创建成功，从返回的 Data 中获取 FID
+					if createResp.Data != nil {
+						if fid, ok := createResp.Data["fid"].(string); ok && fid != "" {
+							lastCreatedFid = fid
+						}
+					}
 				}
 			}
-			destDirInfo, err = qc.GetFileInfo(destDirPath)
-			if err != nil {
-				return &StandardResponse{
-					Success: false,
-					Code:    "GET_DIRECTORY_INFO_ERROR",
-					Message: fmt.Sprintf("failed to get destination directory info: %v", err),
-					Data:    nil,
-				}, nil
+			// 如果创建了目录并获取到了 FID，直接使用 FID，否则再次查询路径
+			if lastCreatedFid != "" {
+				destDirPath = lastCreatedFid
+				destDirInfo = &StandardResponse{
+					Success: true,
+					Code:    "OK",
+					Message: "Directory created",
+					Data:    map[string]interface{}{"fid": lastCreatedFid},
+				}
+			} else {
+				destDirInfo, err = qc.GetFileInfo(destDirPath)
+				if err != nil {
+					return &StandardResponse{
+						Success: false,
+						Code:    "GET_DIRECTORY_INFO_ERROR",
+						Message: fmt.Sprintf("failed to get destination directory info: %v", err),
+						Data:    nil,
+					}, nil
+				}
 			}
 		}
 		if !destDirInfo.Success {
@@ -419,14 +558,51 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		mimeType = "application/octet-stream"
 	}
 
-	pre, err := qc.upPre(destFileName, mimeType, fileSize, destDirPath)
-	if err != nil {
-		return &StandardResponse{
-			Success: false,
-			Code:    "PRE_UPLOAD_ERROR",
-			Message: fmt.Sprintf("pre-upload failed: %v", err),
-			Data:    nil,
-		}, nil
+	// 先检查是否有保存的上传状态（断点续传）
+	statePath := getUploadStatePath(filePath, destPath)
+	var savedState *UploadState
+	var pre *PreUploadResponse
+	var useSavedState bool
+
+	// 尝试加载保存的上传状态
+	if state, loadErr := loadUploadState(statePath); loadErr == nil {
+		// 验证状态是否有效：文件路径、大小、目标路径是否匹配
+		if state.FilePath == filePath && state.DestPath == destPath && state.FileSize == fileSize {
+			// 尝试使用保存的状态，构建 PreUploadResponse
+			pre = &PreUploadResponse{
+				Code:   0,
+				Status: 200,
+			}
+			pre.Data.TaskID = state.TaskID
+			pre.Data.Bucket = state.Bucket
+			pre.Data.ObjKey = state.ObjKey
+			pre.Data.UploadID = state.UploadID
+			pre.Data.UploadURL = state.UploadURL
+			pre.Data.AuthInfo = state.AuthInfo
+			pre.Data.Callback = state.Callback
+			pre.Metadata.PartSize = state.PartSize
+
+			// 验证 uploadId 是否仍然有效：尝试上传一个空分片或查询分片列表
+			// 由于没有查询 API，我们直接尝试使用，如果失败再重新获取
+			useSavedState = true
+			savedState = state
+		} else {
+			// 文件不匹配，删除旧状态
+			deleteUploadState(statePath)
+		}
+	}
+
+	// 如果没有保存的状态或状态无效，调用 upPre 获取新的上传信息
+	if !useSavedState {
+		pre, err = qc.upPre(destFileName, mimeType, fileSize, destDirPath)
+		if err != nil {
+			return &StandardResponse{
+				Success: false,
+				Code:    "PRE_UPLOAD_ERROR",
+				Message: fmt.Sprintf("pre-upload failed: %v", err),
+				Data:    nil,
+			}, nil
+		}
 	}
 
 	file.Seek(0, 0)
@@ -448,12 +624,36 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 
 	hashResp, err := qc.upHash(md5Sum, sha1Sum, pre.Data.TaskID)
 	if err != nil {
-		return &StandardResponse{
-			Success: false,
-			Code:    "HASH_VERIFICATION_ERROR",
-			Message: fmt.Sprintf("hash verification failed: %v", err),
-			Data:    nil,
-		}, nil
+		// 如果使用保存的状态但 hash 验证失败，可能是 taskId 已过期，重新获取
+		if useSavedState {
+			deleteUploadState(statePath)
+			pre, err = qc.upPre(destFileName, mimeType, fileSize, destDirPath)
+			if err != nil {
+				return &StandardResponse{
+					Success: false,
+					Code:    "PRE_UPLOAD_ERROR",
+					Message: fmt.Sprintf("pre-upload failed: %v", err),
+					Data:    nil,
+				}, nil
+			}
+			hashResp, err = qc.upHash(md5Sum, sha1Sum, pre.Data.TaskID)
+			if err != nil {
+				return &StandardResponse{
+					Success: false,
+					Code:    "HASH_VERIFICATION_ERROR",
+					Message: fmt.Sprintf("hash verification failed: %v", err),
+					Data:    nil,
+				}, nil
+			}
+			useSavedState = false
+		} else {
+			return &StandardResponse{
+				Success: false,
+				Code:    "HASH_VERIFICATION_ERROR",
+				Message: fmt.Sprintf("hash verification failed: %v", err),
+				Data:    nil,
+			}, nil
+		}
 	}
 
 	if hashResp.Data.Finish {
@@ -475,8 +675,22 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			}, nil
 		}
 		if progressCallback != nil {
-			progressCallback(100)
+			elapsed := time.Since(startTime)
+			// 秒传：文件已存在于服务器，无需实际上传
+			progressInfo := &UploadProgress{
+				Progress:     100,
+				Uploaded:     fileSize,
+				Total:        fileSize,
+				Speed:        0,
+				SpeedStr:     "秒传（文件已存在）",
+				Remaining:    0,
+				RemainingStr: "0s",
+				Elapsed:      elapsed,
+			}
+			progressCallback(progressInfo)
 		}
+		// 删除状态文件（如果存在）
+		deleteUploadState(statePath)
 		responseData := make(map[string]interface{})
 		for k, v := range finish.Data {
 			if k != "preview_url" {
@@ -493,9 +707,51 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 
 	partSize := pre.Metadata.PartSize
 	file.Seek(0, 0)
-	var etags []string
-	partNumber := 1
 
+	var etags []string
+	var startPartNumber int = 1
+
+	// 如果使用保存的状态，恢复已上传的分片信息
+	if useSavedState {
+		etags = make([]string, 0, len(savedState.UploadedParts))
+		// 按 partNumber 排序，填充已上传的分片 ETag
+		maxPart := 0
+		for partNum := range savedState.UploadedParts {
+			if partNum > maxPart {
+				maxPart = partNum
+			}
+		}
+		// 填充已上传的分片（partNumber 从 1 开始）
+		for i := 1; i <= maxPart; i++ {
+			if etag, ok := savedState.UploadedParts[i]; ok {
+				etags = append(etags, etag)
+				startPartNumber = i + 1
+			} else {
+				// 如果中间有缺失的分片，从第一个缺失的分片开始
+				startPartNumber = i
+				break
+			}
+		}
+	}
+
+	// 用于计算速度和剩余时间
+	var lastUpdateTime time.Time
+	var lastUploaded int64
+
+	// 如果从断点续传，计算已上传的字节数并跳过已上传的分片
+	if useSavedState && startPartNumber > 1 {
+		lastUploaded = int64(startPartNumber-1) * partSize
+		if lastUploaded > fileSize {
+			lastUploaded = fileSize
+		}
+		// 跳过已上传的分片
+		skipBytes := int64(startPartNumber-1) * partSize
+		if skipBytes > 0 {
+			file.Seek(skipBytes, 0)
+		}
+	}
+
+	partNumber := startPartNumber
 	for {
 		chunk := make([]byte, partSize)
 		n, err := file.Read(chunk)
@@ -503,6 +759,30 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			break
 		}
 		if err != nil {
+			// 上传失败，保存当前状态以便断点续传
+			if !useSavedState {
+				savedState = &UploadState{
+					FilePath:      filePath,
+					DestPath:      destPath,
+					FileSize:      fileSize,
+					UploadID:      pre.Data.UploadID,
+					TaskID:        pre.Data.TaskID,
+					Bucket:        pre.Data.Bucket,
+					ObjKey:        pre.Data.ObjKey,
+					UploadURL:     pre.Data.UploadURL,
+					PartSize:      partSize,
+					UploadedParts: make(map[int]string),
+					MimeType:      mimeType,
+					AuthInfo:      pre.Data.AuthInfo,
+					Callback:      pre.Data.Callback,
+				}
+			}
+			// 保存已上传的分片
+			for i, etag := range etags {
+				savedState.UploadedParts[i+1] = etag
+			}
+			saveUploadState(statePath, savedState)
+
 			return &StandardResponse{
 				Success: false,
 				Code:    "READ_FILE_ERROR",
@@ -519,6 +799,30 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 
 		etag, err := qc.upPart(pre, mimeType, partNumber, chunk)
 		if err != nil {
+			// 上传失败，保存当前状态以便断点续传
+			if !useSavedState {
+				savedState = &UploadState{
+					FilePath:      filePath,
+					DestPath:      destPath,
+					FileSize:      fileSize,
+					UploadID:      pre.Data.UploadID,
+					TaskID:        pre.Data.TaskID,
+					Bucket:        pre.Data.Bucket,
+					ObjKey:        pre.Data.ObjKey,
+					UploadURL:     pre.Data.UploadURL,
+					PartSize:      partSize,
+					UploadedParts: make(map[int]string),
+					MimeType:      mimeType,
+					AuthInfo:      pre.Data.AuthInfo,
+					Callback:      pre.Data.Callback,
+				}
+			}
+			// 保存已上传的分片
+			for i, etag := range etags {
+				savedState.UploadedParts[i+1] = etag
+			}
+			saveUploadState(statePath, savedState)
+
 			return &StandardResponse{
 				Success: false,
 				Code:    "UPLOAD_PART_ERROR",
@@ -529,13 +833,93 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 
 		etags = append(etags, etag)
 
+		// 更新上传状态
+		if !useSavedState {
+			savedState = &UploadState{
+				FilePath:      filePath,
+				DestPath:      destPath,
+				FileSize:      fileSize,
+				UploadID:      pre.Data.UploadID,
+				TaskID:        pre.Data.TaskID,
+				Bucket:        pre.Data.Bucket,
+				ObjKey:        pre.Data.ObjKey,
+				UploadURL:     pre.Data.UploadURL,
+				PartSize:      partSize,
+				UploadedParts: make(map[int]string),
+				MimeType:      mimeType,
+				AuthInfo:      pre.Data.AuthInfo,
+				Callback:      pre.Data.Callback,
+			}
+		}
+		savedState.UploadedParts[partNumber] = etag
+		// 每上传一个分片后保存状态
+		saveUploadState(statePath, savedState)
+
 		// 更新进度
 		if progressCallback != nil {
-			progress := int(float64(partNumber*int(partSize)) / float64(fileSize) * 100)
+			now := time.Now()
+			uploaded := int64(partNumber) * int64(partSize)
+			if uploaded > fileSize {
+				uploaded = fileSize
+			}
+
+			progress := int(float64(uploaded) / float64(fileSize) * 100)
 			if progress > 100 {
 				progress = 100
 			}
-			progressCallback(progress)
+
+			elapsed := now.Sub(startTime)
+
+			// 计算速度（使用最近一次更新的数据，避免初始速度不稳定）
+			var speed float64
+			var remaining time.Duration
+
+			if !lastUpdateTime.IsZero() && elapsed > 0 {
+				// 使用最近一次更新后的数据计算速度
+				deltaTime := now.Sub(lastUpdateTime)
+				deltaUploaded := uploaded - lastUploaded
+				if deltaTime > 0 {
+					speed = float64(deltaUploaded) / deltaTime.Seconds()
+				} else {
+					// 如果时间间隔太小，使用总体速度
+					speed = float64(uploaded) / elapsed.Seconds()
+				}
+
+				// 计算剩余时间
+				if speed > 0 {
+					remainingBytes := fileSize - uploaded
+					remaining = time.Duration(float64(remainingBytes)/speed) * time.Second
+				}
+			} else {
+				// 第一次更新，使用总体速度
+				if elapsed > 0 {
+					speed = float64(uploaded) / elapsed.Seconds()
+					if speed > 0 {
+						remainingBytes := fileSize - uploaded
+						remaining = time.Duration(float64(remainingBytes)/speed) * time.Second
+					}
+				}
+			}
+
+			// 格式化速度和剩余时间
+			speedStr := formatSpeed(speed)
+			remainingStr := formatDuration(remaining)
+
+			progressInfo := &UploadProgress{
+				Progress:     progress,
+				Uploaded:     uploaded,
+				Total:        fileSize,
+				Speed:        speed,
+				SpeedStr:     speedStr,
+				Remaining:    remaining,
+				RemainingStr: remainingStr,
+				Elapsed:      elapsed,
+			}
+
+			progressCallback(progressInfo)
+
+			lastUpdateTime = now
+			lastUploaded = uploaded
 		}
 
 		partNumber++
@@ -573,9 +957,8 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			}, nil
 		}
 
-		if progressCallback != nil {
-			progressCallback(100)
-		}
+		// 上传成功，删除状态文件
+		deleteUploadState(statePath)
 
 		// 移除 preview_url 字段
 		responseData := make(map[string]interface{})
@@ -663,7 +1046,7 @@ func (qc *QuarkClient) CreateFolder(folderName, pdirFid string) (*StandardRespon
 func (qc *QuarkClient) Copy(srcPath, destPath string) (*StandardResponse, error) {
 	srcPath = normalizePath(srcPath)
 	destPath = normalizePath(destPath)
-	
+
 	// 获取源文件/目录信息
 	srcInfo, err := qc.GetFileInfo(srcPath)
 	if err != nil {
@@ -856,7 +1239,7 @@ func (qc *QuarkClient) Copy(srcPath, destPath string) (*StandardResponse, error)
 func (qc *QuarkClient) Move(srcPath, destPath string) (*StandardResponse, error) {
 	srcPath = normalizePath(srcPath)
 	destPath = normalizePath(destPath)
-	
+
 	// 获取源文件/目录信息
 	srcInfo, err := qc.GetFileInfo(srcPath)
 	if err != nil {
@@ -997,7 +1380,7 @@ func (qc *QuarkClient) Move(srcPath, destPath string) (*StandardResponse, error)
 // newName: 新名称
 func (qc *QuarkClient) Rename(oldPath, newName string) (*StandardResponse, error) {
 	oldPath = normalizePath(oldPath)
-	
+
 	// 获取文件/目录信息
 	fileInfo, err := qc.GetFileInfo(oldPath)
 	if err != nil {
@@ -1172,12 +1555,12 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 		for _, item := range listData {
 			if itemMap, ok := item.(map[string]interface{}); ok {
 				var fileInfo QuarkFileInfo
-				
+
 				// 映射 fid (文件ID)
 				if fid, ok := itemMap["fid"].(string); ok {
 					fileInfo.Fid = fid
 				}
-				
+
 				// 映射 file_name (文件名)
 				if name, ok := itemMap["file_name"].(string); ok {
 					fileInfo.Name = name
@@ -1192,7 +1575,7 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 				} else {
 					fileInfo.Path = ""
 				}
-				
+
 				// 映射 size (文件大小，可能是 float64 或 int)
 				if size, ok := itemMap["size"].(float64); ok {
 					fileInfo.Size = int64(size)
@@ -1201,7 +1584,7 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 				} else if size, ok := itemMap["size"].(int64); ok {
 					fileInfo.Size = size
 				}
-				
+
 				// 处理创建时间：优先使用 created_at，其次使用 l_created_at（都是毫秒时间戳）
 				if createdAt, ok := itemMap["created_at"].(float64); ok {
 					fileInfo.CreatedAt = int64(createdAt)
@@ -1216,7 +1599,7 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 					fileInfo.LCreatedAt = lCreatedAt
 					fileInfo.CreateTime = lCreatedAt / 1000
 				}
-				
+
 				// 处理修改时间：优先使用 updated_at，其次使用 l_updated_at（都是毫秒时间戳）
 				if updatedAt, ok := itemMap["updated_at"].(float64); ok {
 					fileInfo.UpdatedAt = int64(updatedAt)
@@ -1231,17 +1614,17 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 					fileInfo.LUpdatedAt = lUpdatedAt
 					fileInfo.ModifyTime = lUpdatedAt / 1000
 				}
-				
+
 				// 处理是否为目录：优先使用 dir 字段，其次使用 file 字段取反
 				if dir, ok := itemMap["dir"].(bool); ok {
 					fileInfo.IsDirectory = dir
 				} else if file, ok := itemMap["file"].(bool); ok {
 					fileInfo.IsDirectory = !file
 				}
-				
+
 				// download_url 字段在列表API中通常不存在，需要单独获取
 				fileInfo.DownloadURL = ""
-				
+
 				allFileList = append(allFileList, fileInfo)
 			}
 		}
@@ -1335,7 +1718,7 @@ func (qc *QuarkClient) List(dirPath string) (*StandardResponse, error) {
 // GetFileInfo 获取文件或目录信息
 func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool) (*StandardResponse, error) {
 	remotePath = normalizePath(remotePath)
-	
+
 	if remotePath == "/" || remotePath == "" || remotePath == "." {
 		return &StandardResponse{
 			Success: true,
@@ -1374,7 +1757,7 @@ func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool
 	} else {
 		parentPath = "/"
 	}
-	
+
 	var parentFid string
 	parentPath = normalizePath(parentPath)
 	if parentPath == "/" || parentPath == "." || parentPath == "" {
@@ -1388,7 +1771,7 @@ func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool
 				Data:    nil,
 			}, nil
 		}
-		
+
 		parentInfo, err := qc.GetFileInfo(parentPath, true)
 		if err != nil {
 			return &StandardResponse{
@@ -1546,7 +1929,7 @@ func (qc *QuarkClient) GetFileInfo(remotePath string, skipPathConversion ...bool
 // Delete 删除文件或目录
 func (qc *QuarkClient) Delete(remotePath string) (*StandardResponse, error) {
 	remotePath = normalizePath(remotePath)
-	
+
 	// 获取文件信息以获取文件 ID
 	fileInfo, err := qc.GetFileInfo(remotePath)
 	if err != nil {

@@ -23,20 +23,36 @@ func getExecutableDir() (string, error) {
 
 // resolveConfigPath 解析配置文件路径
 // 如果是绝对路径，则直接使用
-// 如果是相对路径，则相对于可执行文件所在目录
+// 如果是相对路径，优先相对于当前工作目录，如果不存在则相对于可执行文件所在目录
 func resolveConfigPath(configPath string) (string, error) {
 	// 如果是绝对路径，直接返回
 	if filepath.IsAbs(configPath) {
 		return configPath, nil
 	}
 
-	// 相对路径，需要获取可执行文件所在目录
+	// 相对路径，优先使用当前工作目录
+	// 这对于开发模式（go run）和正常使用都更友好
+	cwd, err := os.Getwd()
+	if err == nil {
+		// 尝试当前工作目录下的路径
+		cwdPath := filepath.Join(cwd, configPath)
+		if _, statErr := os.Stat(cwdPath); statErr == nil {
+			// 文件存在，使用当前工作目录的路径
+			return cwdPath, nil
+		}
+	}
+
+	// 如果当前工作目录下不存在，尝试相对于可执行文件所在目录
 	execDir, err := getExecutableDir()
 	if err != nil {
+		// 如果获取可执行文件目录失败，回退到当前工作目录
+		if cwd != "" {
+			return filepath.Join(cwd, configPath), nil
+		}
 		return "", fmt.Errorf("failed to get executable directory: %w", err)
 	}
 
-	// 拼接路径
+	// 拼接路径（即使文件可能不存在，也返回路径，让调用者处理文件不存在的错误）
 	return filepath.Join(execDir, configPath), nil
 }
 
