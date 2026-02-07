@@ -122,6 +122,7 @@ type UploadState struct {
 	MimeType     string            `json:"mime_type"`     // MIME类型
 	AuthInfo     json.RawMessage   `json:"auth_info"`     // 认证信息
 	Callback     json.RawMessage   `json:"callback"`      // 回调信息
+	HashCtx      *HashCtx          `json:"hash_ctx,omitempty"` // SHA1增量哈希上下文
 	CreatedAt    time.Time         `json:"created_at"`     // 创建时间
 }
 
@@ -150,6 +151,20 @@ type HashResponse struct {
 	Data   struct {
 		Finish bool `json:"finish"`
 	} `json:"data"`
+}
+
+// HashCtx SHA1增量哈希上下文
+type HashCtx struct {
+	HashType string `json:"hash_type"` // "sha1"
+	H0       string `json:"h0"`       // SHA1的5个32位整数
+	H1       string `json:"h1"`
+	H2       string `json:"h2"`
+	H3       string `json:"h3"`
+	H4       string `json:"h4"`
+	Nl       string `json:"Nl"`       // 已处理的字节数
+	Nh       string `json:"Nh"`       // 哈希相关计数
+	Data     string `json:"data"`     // 未处理的数据
+	Num      string `json:"num"`      // 分片编号或其他计数
 }
 
 // AuthResponse 认证响应
@@ -328,6 +343,7 @@ type OSSPartUploadHeaderBuilder struct {
 	AuthKey   string
 	MimeType  string
 	Timestamp string
+	HashCtx   *HashCtx // SHA1增量哈希上下文（partNumber>=2时需要）
 }
 
 // OSSCommitHeaderBuilder OSS 提交上传头部构建器

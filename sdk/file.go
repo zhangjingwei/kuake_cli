@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"hash"
 	"io"
 	"mime"
 	"net/http"
@@ -180,16 +181,77 @@ func (qc *QuarkClient) upHash(md5Hash, sha1Hash, taskID string) (*HashResponse, 
 	return &hashResp, nil
 }
 
+// updateHashCtx 更新SHA1增量哈希上下文
+// 使用累积的SHA1哈希对象来计算增量哈希上下文
+// hash: 累积的SHA1哈希对象（已处理所有前面的分片）
+// chunkData: 当前分片数据
+// totalBytes: 已处理的总字节数
+func updateHashCtxFromHash(hash hash.Hash, chunkData []byte, totalBytes int64) (*HashCtx, error) {
+	// 更新哈希对象
+	hash.Write(chunkData)
+	
+	// 获取当前的哈希值
+	hashSum := hash.Sum(nil)
+	
+	// SHA1 是 160 位，分为 5 个 32 位整数（大端序）
+	h0 := uint32(hashSum[0])<<24 | uint32(hashSum[1])<<16 | uint32(hashSum[2])<<8 | uint32(hashSum[3])
+	h1 := uint32(hashSum[4])<<24 | uint32(hashSum[5])<<16 | uint32(hashSum[6])<<8 | uint32(hashSum[7])
+	h2 := uint32(hashSum[8])<<24 | uint32(hashSum[9])<<16 | uint32(hashSum[10])<<8 | uint32(hashSum[11])
+	h3 := uint32(hashSum[12])<<24 | uint32(hashSum[13])<<16 | uint32(hashSum[14])<<8 | uint32(hashSum[15])
+	h4 := uint32(hashSum[16])<<24 | uint32(hashSum[17])<<16 | uint32(hashSum[18])<<8 | uint32(hashSum[19])
+	
+	// 计算新的总长度
+	newNl := totalBytes + int64(len(chunkData))
+	
+	return &HashCtx{
+		HashType: "sha1",
+		H0:       fmt.Sprintf("%d", h0),
+		H1:       fmt.Sprintf("%d", h1),
+		H2:       fmt.Sprintf("%d", h2),
+		H3:       fmt.Sprintf("%d", h3),
+		H4:       fmt.Sprintf("%d", h4),
+		Nl:       fmt.Sprintf("%d", newNl),
+		Nh:       "0",
+		Data:     "",
+		Num:      "0",
+	}, nil
+}
+
+// encodeHashCtx 将 HashCtx 编码为 base64 字符串
+func encodeHashCtx(ctx *HashCtx) (string, error) {
+	if ctx == nil {
+		return "", nil
+	}
+	jsonData, err := json.Marshal(ctx)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(jsonData), nil
+}
+
 // upPart 上传文件分片
-func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumber int, chunkData []byte) (string, error) {
+func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumber int, chunkData []byte, hashCtx *HashCtx) (string, *HashCtx, error) {
 	now := time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT")
-	authMeta := fmt.Sprintf("PUT\n\n%s\n%s\nx-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit\n/%s/%s?partNumber=%d&uploadId=%s",
-		mimeType, now, now, pre.Data.Bucket, pre.Data.ObjKey, partNumber, pre.Data.UploadID)
+	
+	// 构建 authMeta，如果 partNumber >= 2，需要包含 X-Oss-Hash-Ctx
+	authMeta := fmt.Sprintf("PUT\n\n%s\n%s\n", mimeType, now)
+	
+	// partNumber >= 2 时需要包含 X-Oss-Hash-Ctx
+	if partNumber >= 2 && hashCtx != nil {
+		hashCtxStr, err := encodeHashCtx(hashCtx)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to encode hash ctx: %w", err)
+		}
+		authMeta += fmt.Sprintf("X-Oss-Hash-Ctx:%s\n", hashCtxStr)
+	}
+	
+	authMeta += fmt.Sprintf("x-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit\n/%s/%s?partNumber=%d&uploadId=%s",
+		now, pre.Data.Bucket, pre.Data.ObjKey, partNumber, pre.Data.UploadID)
 
 	// 使用 client 方法获取 Authorization
 	authKey, err := qc.getOSSAuthKey(authMeta, pre.Data.AuthInfo, pre.Data.TaskID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	// 构建上传 URL
@@ -209,10 +271,11 @@ func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumbe
 		AuthKey:   authKey,
 		MimeType:  mimeType,
 		Timestamp: now,
+		HashCtx:   hashCtx, // partNumber >= 2 时需要
 	}
 	req, err := qc.newRequestWithHeaders("PUT", uploadURL, bytes.NewReader(chunkData), headerBuilder)
 	if err != nil {
-		return "", fmt.Errorf("failed to create upload request: %w", err)
+		return "", nil, fmt.Errorf("failed to create upload request: %w", err)
 	}
 
 	params := req.URL.Query()
@@ -229,7 +292,7 @@ func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumbe
 	// 发送请求
 	resp, err := qc.HttpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to upload chunk: %w", err)
+		return "", nil, fmt.Errorf("failed to upload chunk: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -251,20 +314,23 @@ func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumbe
 			if err := xml.Unmarshal(bodyBytes, &ossErr); err == nil && ossErr.PartEtag != "" {
 				// 移除 ETag 两端的引号（如果有）
 				etag := strings.Trim(ossErr.PartEtag, "\"")
-				return etag, nil
+				// 注意：哈希上下文在上传循环中通过累积的SHA1哈希对象更新
+				return etag, nil, nil
 			}
 		}
 
-		return "", fmt.Errorf("upload chunk failed with status %d: %s", resp.StatusCode, bodyStr)
+		return "", nil, fmt.Errorf("upload chunk failed with status %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	// 从响应头获取 ETag
 	etag := resp.Header.Get("ETag")
 	if etag == "" {
-		return "", fmt.Errorf("no ETag in response")
+		return "", nil, fmt.Errorf("no ETag in response")
 	}
 
-	return etag, nil
+	// 注意：哈希上下文在上传循环中通过累积的SHA1哈希对象更新
+	// 这里返回 nil，因为实际的更新在 UploadFile 函数中进行
+	return etag, nil, nil
 }
 
 // upCommit 提交上传（完成分片上传）
@@ -586,6 +652,7 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			// 由于没有查询 API，我们直接尝试使用，如果失败再重新获取
 			useSavedState = true
 			savedState = state
+			// HashCtx 会在后续的上传循环中从 savedState 恢复
 		} else {
 			// 文件不匹配，删除旧状态
 			deleteUploadState(statePath)
@@ -751,6 +818,71 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}
 	}
 
+	// 初始化累积的SHA1哈希对象，用于计算增量哈希上下文
+	var cumulativeHash hash.Hash
+	var hashCtx *HashCtx
+	var processedBytes int64
+	
+	// 如果从断点续传，需要重新计算已处理部分的SHA1
+	if useSavedState && startPartNumber > 1 {
+		// 如果保存的状态中有HashCtx，直接使用
+		if savedState.HashCtx != nil {
+			hashCtx = savedState.HashCtx
+			// 重新读取已处理的部分来计算SHA1（用于后续分片）
+			file.Seek(0, 0)
+			cumulativeHash = sha1.New()
+			processedBytes = 0
+			for i := 1; i < startPartNumber; i++ {
+				chunk := make([]byte, partSize)
+				n, err := file.Read(chunk)
+				if err != nil && err != io.EOF {
+					return &StandardResponse{
+						Success: false,
+						Code:    "READ_FILE_ERROR",
+						Message: fmt.Sprintf("failed to read file chunk for hash calculation: %v", err),
+						Data:    nil,
+					}, nil
+				}
+				if n > 0 {
+					cumulativeHash.Write(chunk[:n])
+					processedBytes += int64(n)
+				}
+			}
+			// 恢复文件位置到当前分片
+			file.Seek(processedBytes, 0)
+		} else {
+			// 如果没有保存的HashCtx，重新计算
+			file.Seek(0, 0)
+			cumulativeHash = sha1.New()
+			processedBytes = 0
+			for i := 1; i < startPartNumber; i++ {
+				chunk := make([]byte, partSize)
+				n, err := file.Read(chunk)
+				if err != nil && err != io.EOF {
+					return &StandardResponse{
+						Success: false,
+						Code:    "READ_FILE_ERROR",
+						Message: fmt.Sprintf("failed to read file chunk for hash calculation: %v", err),
+						Data:    nil,
+					}, nil
+				}
+				if n > 0 {
+					cumulativeHash.Write(chunk[:n])
+					processedBytes += int64(n)
+				}
+			}
+			// 从累积的哈希对象生成HashCtx
+			hashCtx, _ = updateHashCtxFromHash(cumulativeHash, []byte{}, processedBytes)
+			// 恢复文件位置到当前分片
+			file.Seek(processedBytes, 0)
+		}
+	} else {
+		// 新上传，初始化哈希对象
+		cumulativeHash = sha1.New()
+		processedBytes = 0
+		hashCtx = nil // 第一个分片不需要HashCtx
+	}
+
 	partNumber := startPartNumber
 	for {
 		chunk := make([]byte, partSize)
@@ -775,7 +907,10 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 					MimeType:      mimeType,
 					AuthInfo:      pre.Data.AuthInfo,
 					Callback:      pre.Data.Callback,
+					HashCtx:       hashCtx,
 				}
+			} else {
+				savedState.HashCtx = hashCtx
 			}
 			// 保存已上传的分片
 			for i, etag := range etags {
@@ -797,7 +932,13 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 
 		chunk = chunk[:n]
 
-		etag, err := qc.upPart(pre, mimeType, partNumber, chunk)
+		// 上传分片（partNumber >= 2 时需要传递 hashCtx）
+		var currentHashCtx *HashCtx
+		if partNumber >= 2 {
+			currentHashCtx = hashCtx
+		}
+		
+		etag, _, err := qc.upPart(pre, mimeType, partNumber, chunk, currentHashCtx)
 		if err != nil {
 			// 上传失败，保存当前状态以便断点续传
 			if !useSavedState {
@@ -815,7 +956,10 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 					MimeType:      mimeType,
 					AuthInfo:      pre.Data.AuthInfo,
 					Callback:      pre.Data.Callback,
+					HashCtx:       hashCtx,
 				}
+			} else {
+				savedState.HashCtx = hashCtx
 			}
 			// 保存已上传的分片
 			for i, etag := range etags {
@@ -832,6 +976,12 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}
 
 		etags = append(etags, etag)
+		
+		// 更新累积的SHA1哈希对象和HashCtx（为下一个分片准备）
+		if cumulativeHash != nil {
+			hashCtx, _ = updateHashCtxFromHash(cumulativeHash, chunk, processedBytes)
+			processedBytes += int64(len(chunk))
+		}
 
 		// 更新上传状态
 		if !useSavedState {
@@ -849,7 +999,10 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 				MimeType:      mimeType,
 				AuthInfo:      pre.Data.AuthInfo,
 				Callback:      pre.Data.Callback,
+				HashCtx:       hashCtx,
 			}
+		} else {
+			savedState.HashCtx = hashCtx
 		}
 		savedState.UploadedParts[partNumber] = etag
 		// 每上传一个分片后保存状态
@@ -2027,6 +2180,15 @@ func (b *OSSPartUploadHeaderBuilder) BuildHeaders(req *http.Request, qc *QuarkCl
 	req.Header.Set("Content-Type", b.MimeType)
 	req.Header.Set("x-oss-date", b.Timestamp)
 	req.Header.Set("x-oss-user-agent", "aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit")
+	
+	// 如果存在 HashCtx，设置 X-Oss-Hash-Ctx header
+	if b.HashCtx != nil {
+		hashCtxStr, err := encodeHashCtx(b.HashCtx)
+		if err == nil {
+			req.Header.Set("X-Oss-Hash-Ctx", hashCtxStr)
+		}
+	}
+	
 	return nil
 }
 

@@ -18,7 +18,7 @@ const (
 )
 
 // Version 版本号
-var Version = "v1.3.5"
+var Version = "v1.3.6"
 
 type CLIResult struct {
 	Success bool                   `json:"success"`
@@ -271,7 +271,7 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 			// 秒传情况，显示特殊提示
 			fmt.Fprintf(os.Stderr, "\r上传进度: %d%% | %s", progress.Progress, progress.SpeedStr)
 		} else {
-			fmt.Fprintf(os.Stderr, "\r上传进度: %d%% | 速度: %s | 剩余: %s", 
+			fmt.Fprintf(os.Stderr, "\r上传进度: %d%% | 速度: %s | 剩余: %s",
 				progress.Progress, progress.SpeedStr, progress.RemainingStr)
 		}
 		if progress.Progress == 100 {

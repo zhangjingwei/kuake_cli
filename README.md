@@ -35,7 +35,7 @@
 - **文件列表**: 列出夸克网盘指定目录下的所有文件和子目录
 - **文件信息**: 获取文件或目录的详细信息（大小、修改时间、路径等）
 - **下载链接**: 获取文件的下载链接
-- **文件上传**: 将本地文件上传到夸克网盘（支持大文件分片上传）
+- **文件上传**: 将本地文件上传到夸克网盘（支持大文件分片上传，支持断点续传和增量哈希）
 - **文件夹操作**: 创建文件夹
 - **文件操作**: 移动、复制、重命名文件或目录
 - **文件删除**: 删除夸克网盘中的文件或目录
@@ -68,15 +68,15 @@ chmod +x build.sh
 
 **Linux/macOS**:
 ```bash
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.5-linux-amd64
-chmod +x kuake-v1.3.5-linux-amd64
-./kuake-v1.3.5-linux-amd64 user
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.6-linux-amd64
+chmod +x kuake-v1.3.6-linux-amd64
+./kuake-v1.3.6-linux-amd64 user
 ```
 
 **Windows**:
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.5-windows-amd64.exe" -OutFile "kuake-v1.3.5-windows-amd64.exe"
-.\kuake-v1.3.5-windows-amd64.exe user
+Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.6-windows-amd64.exe" -OutFile "kuake-v1.3.6-windows-amd64.exe"
+.\kuake-v1.3.6-windows-amd64.exe user
 ```
 
 ## 快速开始
@@ -100,9 +100,9 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 ### 2. 使用 CLI 工具
 
 ```bash
-./kuake-v1.3.5-linux-amd64 user
-./kuake-v1.3.5-linux-amd64 upload "file.txt" "/file.txt"
-./kuake-v1.3.5-linux-amd64 list "/"
+./kuake-v1.3.6-linux-amd64 user
+./kuake-v1.3.6-linux-amd64 upload "file.txt" "/file.txt"
+./kuake-v1.3.6-linux-amd64 list "/"
 ```
 
 ## 配置说明
@@ -271,6 +271,11 @@ kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 - 如果已添加到 PATH，可以直接使用 `kuake` 命令
 
 ## 变更日志
+
+### v1.3.6
+
+- **新增 X-Oss-Hash-Ctx 支持**：实现 OSS 分片上传的增量 SHA1 哈希上下文（X-Oss-Hash-Ctx header），确保与浏览器端行为一致
+- **改进断点续传功能**：断点续传现在支持 HashCtx 的保存和恢复，确保恢复上传时哈希上下文正确
 
 ### v1.3.5
 

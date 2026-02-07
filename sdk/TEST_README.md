@@ -9,6 +9,8 @@
 - `user_test.go` - 用户信息获取的测试
 - `file_test.go` - 文件操作（上传、下载、创建、删除、移动、复制、重命名）的测试
 - `share_test.go` - 分享相关功能的测试
+- `hash_ctx_test.go` - X-Oss-Hash-Ctx 功能的单元测试
+- `upload_hash_ctx_integration_test.go` - X-Oss-Hash-Ctx 功能的集成测试
 
 ## 运行测试
 
@@ -126,12 +128,53 @@ go tool cover -html=coverage.out
 - `TestSaveShareFile` - 测试保存分享文件
 - `TestSetSharePassword` - 测试设置分享密码
 
+### hash_ctx_test.go
+- `TestEncodeHashCtx` - 测试 HashCtx 编码功能
+- `TestEncodeHashCtx_Nil` - 测试 nil HashCtx 处理
+- `TestUpdateHashCtxFromHash` - 测试增量 SHA1 哈希上下文更新
+- `TestUpdateHashCtxFromHash_Incremental` - 测试增量哈希计算的连续性
+- `TestUpdateHashCtxFromHash_Consistency` - 测试一致性
+- `TestEncodeDecodeRoundTrip` - 测试编码-解码往返转换
+- `TestHashCtx_RealWorldExample` - 使用真实世界数据测试
+
+### upload_hash_ctx_integration_test.go
+- `TestUploadFileHashCtx_Integration` - 实际上传测试（需要网络）
+- `TestUploadFileHashCtx_Resume` - 断点续传测试（需要网络）
+- `TestUploadStateHashCtx` - 状态保存/加载测试
+- `TestUploadStateHashCtx_Nil` - nil HashCtx 处理测试
+
 ## 注意事项
 
 1. **网络依赖**：大部分测试需要网络连接和有效的API凭证
 2. **配置文件**：确保有有效的配置文件才能运行集成测试
 3. **测试数据**：某些测试可能会创建或删除实际的文件/文件夹
 4. **速率限制**：注意API的速率限制，避免频繁调用
+
+## X-Oss-Hash-Ctx 测试
+
+### 运行单元测试（不需要网络）
+
+```bash
+go test ./sdk -v -run "Test.*HashCtx"
+```
+
+### 运行集成测试（需要网络和有效配置）
+
+```bash
+# Windows PowerShell
+$env:INTEGRATION_TEST="1"
+go test ./sdk -v -run "TestUploadFileHashCtx_Integration"
+
+# Linux/Mac
+INTEGRATION_TEST=1 go test ./sdk -v -run "TestUploadFileHashCtx_Integration"
+```
+
+### 验证要点
+
+- partNumber=1 的 PUT 请求**不包含** X-Oss-Hash-Ctx
+- partNumber>=2 的 PUT 请求**包含** X-Oss-Hash-Ctx
+- HashCtx 值正确递增（Nl 字段递增）
+- 断点续传时 HashCtx 正确保存和恢复
 
 ## 贡献
 
