@@ -189,20 +189,20 @@ func (qc *QuarkClient) upHash(md5Hash, sha1Hash, taskID string) (*HashResponse, 
 func updateHashCtxFromHash(hash hash.Hash, chunkData []byte, totalBytes int64) (*HashCtx, error) {
 	// 更新哈希对象
 	hash.Write(chunkData)
-	
+
 	// 获取当前的哈希值
 	hashSum := hash.Sum(nil)
-	
+
 	// SHA1 是 160 位，分为 5 个 32 位整数（大端序）
 	h0 := uint32(hashSum[0])<<24 | uint32(hashSum[1])<<16 | uint32(hashSum[2])<<8 | uint32(hashSum[3])
 	h1 := uint32(hashSum[4])<<24 | uint32(hashSum[5])<<16 | uint32(hashSum[6])<<8 | uint32(hashSum[7])
 	h2 := uint32(hashSum[8])<<24 | uint32(hashSum[9])<<16 | uint32(hashSum[10])<<8 | uint32(hashSum[11])
 	h3 := uint32(hashSum[12])<<24 | uint32(hashSum[13])<<16 | uint32(hashSum[14])<<8 | uint32(hashSum[15])
 	h4 := uint32(hashSum[16])<<24 | uint32(hashSum[17])<<16 | uint32(hashSum[18])<<8 | uint32(hashSum[19])
-	
+
 	// 计算新的总长度
 	newNl := totalBytes + int64(len(chunkData))
-	
+
 	return &HashCtx{
 		HashType: "sha1",
 		H0:       fmt.Sprintf("%d", h0),
@@ -232,10 +232,10 @@ func encodeHashCtx(ctx *HashCtx) (string, error) {
 // upPart 上传文件分片
 func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumber int, chunkData []byte, hashCtx *HashCtx) (string, *HashCtx, error) {
 	now := time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT")
-	
+
 	// 构建 authMeta，如果 partNumber >= 2，需要包含 X-Oss-Hash-Ctx
 	authMeta := fmt.Sprintf("PUT\n\n%s\n%s\n", mimeType, now)
-	
+
 	// partNumber >= 2 时需要包含 X-Oss-Hash-Ctx
 	if partNumber >= 2 && hashCtx != nil {
 		hashCtxStr, err := encodeHashCtx(hashCtx)
@@ -244,7 +244,7 @@ func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumbe
 		}
 		authMeta += fmt.Sprintf("X-Oss-Hash-Ctx:%s\n", hashCtxStr)
 	}
-	
+
 	authMeta += fmt.Sprintf("x-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit\n/%s/%s?partNumber=%d&uploadId=%s",
 		now, pre.Data.Bucket, pre.Data.ObjKey, partNumber, pre.Data.UploadID)
 
@@ -822,7 +822,7 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 	var cumulativeHash hash.Hash
 	var hashCtx *HashCtx
 	var processedBytes int64
-	
+
 	// 如果从断点续传，需要重新计算已处理部分的SHA1
 	if useSavedState && startPartNumber > 1 {
 		// 如果保存的状态中有HashCtx，直接使用
@@ -937,7 +937,7 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		if partNumber >= 2 {
 			currentHashCtx = hashCtx
 		}
-		
+
 		etag, _, err := qc.upPart(pre, mimeType, partNumber, chunk, currentHashCtx)
 		if err != nil {
 			// 上传失败，保存当前状态以便断点续传
@@ -976,7 +976,7 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}
 
 		etags = append(etags, etag)
-		
+
 		// 更新累积的SHA1哈希对象和HashCtx（为下一个分片准备）
 		if cumulativeHash != nil {
 			hashCtx, _ = updateHashCtxFromHash(cumulativeHash, chunk, processedBytes)
@@ -1810,7 +1810,13 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 
 // List 列出目录下的文件
 // dirPath: 目录路径（根目录使用 "/"）
+// 入口先去掉可能被 Windows/Git Bash 带入的首尾双引号并规范化路径，避免 list "/" 等被误判为 FID
 func (qc *QuarkClient) List(dirPath string) (*StandardResponse, error) {
+	dirPath = strings.TrimSpace(dirPath)
+	if len(dirPath) >= 2 && dirPath[0] == '"' && dirPath[len(dirPath)-1] == '"' {
+		dirPath = dirPath[1 : len(dirPath)-1]
+	}
+	dirPath = normalizePath(dirPath)
 	// 处理目录路径：根目录使用标准表示 "/"
 	var pdirFid string
 	if dirPath == "" || dirPath == "/" {
@@ -2180,7 +2186,7 @@ func (b *OSSPartUploadHeaderBuilder) BuildHeaders(req *http.Request, qc *QuarkCl
 	req.Header.Set("Content-Type", b.MimeType)
 	req.Header.Set("x-oss-date", b.Timestamp)
 	req.Header.Set("x-oss-user-agent", "aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit")
-	
+
 	// 如果存在 HashCtx，设置 X-Oss-Hash-Ctx header
 	if b.HashCtx != nil {
 		hashCtxStr, err := encodeHashCtx(b.HashCtx)
@@ -2188,7 +2194,7 @@ func (b *OSSPartUploadHeaderBuilder) BuildHeaders(req *http.Request, qc *QuarkCl
 			req.Header.Set("X-Oss-Hash-Ctx", hashCtxStr)
 		}
 	}
-	
+
 	return nil
 }
 

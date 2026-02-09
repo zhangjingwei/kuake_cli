@@ -15,8 +15,8 @@ NC='\033[0m' # No Color
 PROJECT_NAME="kuake"
 BUILD_DIR="dist"
 
-# 从 main.go 中提取版本号
-VERSION=$(grep -oP 'var Version = "\K[^"]+' cmd/main.go 2>/dev/null || echo "")
+# 从 main.go 中提取版本号（使用 sed 以兼容 macOS/BSD）
+VERSION=$(sed -n 's/.*var Version = "\([^"]*\)".*/\1/p' cmd/main.go | head -1)
 if [ -z "$VERSION" ]; then
     echo -e "${RED}Error: Failed to extract version from cmd/main.go${NC}"
     exit 1
