@@ -2210,42 +2210,191 @@ func (b *OSSCommitHeaderBuilder) BuildHeaders(req *http.Request, qc *QuarkClient
 	return nil
 }
 
-// GetDownloadURL 获取文件的下载链接
+// GetDownloadURL 获取文件的下载链接（支持同步与异步，大文件为异步任务会轮询直到拿到 URL）
 // fid: 文件ID
 // 返回: 下载链接URL
 func (qc *QuarkClient) GetDownloadURL(fid string) (string, error) {
-	// 构建请求数据（API 期望 fids 为数组）
 	data := map[string]interface{}{
 		"fids": []string{fid},
 	}
-
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal download request: %w", err)
 	}
-
-	// 发送请求
 	respMap, err := qc.makeRequest("POST", FILE_DOWNLOAD, bytes.NewBuffer(jsonData), nil)
 	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "23018") || strings.Contains(errStr, "download file size limit") {
+			return "", fmt.Errorf("超过文件下载大小限制，请使用客户端下载")
+		}
 		return "", fmt.Errorf("download request failed: %w", err)
 	}
-
-	// 解析响应
-	var downloadResp DownloadResponse
-	if err := qc.parseResponse(respMap, &downloadResp); err != nil {
-		return "", fmt.Errorf("failed to decode download response: %w", err)
+	code, _ := respMap["code"].(float64)
+	status, _ := respMap["status"].(float64)
+	if int(code) != 0 || int(status) != 200 {
+		return "", fmt.Errorf("download failed: code=%v, status=%v", code, status)
 	}
-
-	// 检查响应状态
-	if downloadResp.Code != 0 || downloadResp.Status != 200 {
-		return "", fmt.Errorf("download failed: code=%d, status=%d", downloadResp.Code, downloadResp.Status)
-	}
-
-	// 检查数据数组是否为空
-	if len(downloadResp.Data) == 0 {
+	rawData := respMap["data"]
+	if rawData == nil {
 		return "", fmt.Errorf("download response data is empty")
 	}
+	// 同步：data 为数组，直接带 download_url
+	if arr, ok := rawData.([]interface{}); ok && len(arr) > 0 {
+		if first, ok := arr[0].(map[string]interface{}); ok {
+			if u, _ := first["download_url"].(string); u != "" {
+				return u, nil
+			}
+		}
+	}
+	// 异步：data 为对象，含 task_id / task_sync / task_resp
+	if obj, ok := rawData.(map[string]interface{}); ok {
+		taskID, _ := obj["task_id"].(string)
+		_, _ = obj["task_sync"].(bool)
+		if taskResp, _ := obj["task_resp"].(map[string]interface{}); taskResp != nil {
+			if dataArr, _ := taskResp["data"].([]interface{}); len(dataArr) > 0 {
+				if first, _ := dataArr[0].(map[string]interface{}); first != nil {
+					if u, _ := first["download_url"].(string); u != "" {
+						return u, nil
+					}
+				}
+			}
+		}
+		if taskID != "" {
+			return qc.waitForDownloadTaskComplete(taskID)
+		}
+	}
+	return "", fmt.Errorf("download response data is empty or invalid")
+}
 
-	// 返回第一个文件的下载链接
-	return downloadResp.Data[0].DownloadURL, nil
+// waitForDownloadTaskComplete 轮询下载任务直到完成，返回 download_url
+func (qc *QuarkClient) waitForDownloadTaskComplete(taskID string) (string, error) {
+	const maxRetries = 60
+	retryInterval := 2 * time.Second
+	for i := 0; i < maxRetries; i++ {
+		time.Sleep(retryInterval)
+		queryParams := url.Values{}
+		queryParams.Set("task_id", taskID)
+		queryParams.Set("retry_index", "0")
+		reqURL := qc.baseURL + TASK + "?" + queryParams.Encode()
+		respMap, err := qc.makeRequest("GET", reqURL, nil, nil)
+		if err != nil {
+			return "", fmt.Errorf("query download task failed: %w", err)
+		}
+		rawData := respMap["data"]
+		if rawData == nil {
+			continue
+		}
+		data, ok := rawData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		status, _ := data["status"].(float64)
+		if status == 3 {
+			return "", fmt.Errorf("download task failed")
+		}
+		if status == 2 {
+			if u, _ := data["download_url"].(string); u != "" {
+				return u, nil
+			}
+			if arr, _ := data["data"].([]interface{}); len(arr) > 0 {
+				if first, _ := arr[0].(map[string]interface{}); first != nil {
+					if u, _ := first["download_url"].(string); u != "" {
+						return u, nil
+					}
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("download task timeout after %d retries", maxRetries)
+}
+
+// DownloadProgress 下载进度回调参数
+type DownloadProgress struct {
+	Downloaded int64 // 已下载字节数
+	Total      int64 // 总字节数，-1 表示未知
+}
+
+// DownloadFile 将文件下载到本地
+// fid: 文件ID；destPath: 本地路径（文件或目录，为目录时使用 fileName 作为文件名）；fileName: 远程文件名（当 destPath 为目录时使用）
+// progressCallback: 进度回调，可为 nil
+func (qc *QuarkClient) DownloadFile(fid, destPath, fileName string, progressCallback func(*DownloadProgress)) error {
+	downloadURL, err := qc.GetDownloadURL(fid)
+	if err != nil {
+		return err
+	}
+	// 若目标为目录或以分隔符结尾，则保存为 destPath/fileName
+	path := destPath
+	if path == "" || path == "." {
+		path = fileName
+	} else if info, err := os.Stat(path); err == nil && info.IsDir() {
+		path = filepath.Join(path, fileName)
+	} else if strings.HasSuffix(path, "/") || strings.HasSuffix(path, string(filepath.Separator)) {
+		path = filepath.Join(path, fileName)
+	}
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create local dir: %w", err)
+		}
+	}
+	out, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create local file: %w", err)
+	}
+	defer out.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+	cookieParts := make([]string, 0, len(qc.cookies))
+	for k, v := range qc.cookies {
+		cookieParts = append(cookieParts, fmt.Sprintf("%s=%s", k, v))
+	}
+	if len(cookieParts) > 0 {
+		req.Header.Set("Cookie", strings.Join(cookieParts, "; "))
+	}
+
+	client := &http.Client{
+		Timeout:   2 * time.Hour,
+		Transport: &http.Transport{},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("download failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+	var total int64 = -1
+	if resp.ContentLength >= 0 {
+		total = resp.ContentLength
+	}
+	var written int64
+	buf := make([]byte, 32*1024)
+	for {
+		nr, errRead := resp.Body.Read(buf)
+		if nr > 0 {
+			nw, errWrite := out.Write(buf[:nr])
+			written += int64(nw)
+			if errWrite != nil {
+				return fmt.Errorf("write file: %w", errWrite)
+			}
+			if progressCallback != nil {
+				progressCallback(&DownloadProgress{Downloaded: written, Total: total})
+			}
+		}
+		if errRead == io.EOF {
+			break
+		}
+		if errRead != nil {
+			return fmt.Errorf("read body: %w", errRead)
+		}
+	}
+	return nil
 }

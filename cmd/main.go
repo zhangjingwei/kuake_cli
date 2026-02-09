@@ -111,7 +111,7 @@ func main() {
 	case "info":
 		result = handleInfo(client, args)
 	case "download":
-		result = handleDownloadURL(client, args)
+		result = handleDownload(client, args)
 	case "upload":
 		result = handleUpload(client, args)
 	case "create":
@@ -165,7 +165,7 @@ Commands:
   user                        Get user information
   list [path]                 List directory (default: "/")
   info <path>                 Get file/folder info
-  download <path>             Get file download URL
+  download <path> [dest]      Get file download URL, or download to local file if dest given
   upload <file> <dest>        Upload file (all parameters must be quoted)
   create <name> <pdir>        Create folder (use "/" for root)
   move <src> <dest>           Move file/folder
@@ -188,6 +188,8 @@ Examples:
   kuake list "/"
   kuake info "/file.txt"
   kuake download "/file.txt"
+  kuake download "/file.txt" .
+  kuake download "/file.txt" ./local.zip
   kuake upload "file.txt" "/folder/file.txt"
   kuake create "folder" "/"
   kuake move "/file.txt" "/folder/"
@@ -654,19 +656,23 @@ func handleShareCreate(client *sdk.QuarkClient, args []string) *CLIResult {
 	}
 }
 
-// handleDownloadURL 处理获取下载链接命令
-func handleDownloadURL(client *sdk.QuarkClient, args []string) *CLIResult {
+// handleDownload 处理下载命令：download <path> [dest]
+// 若提供 dest则下载到本地文件并输出进度；否则仅返回下载链接 JSON
+func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 	if len(args) < 1 {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: `Usage: download <path> (path must be quoted, e.g., download 'file(1).txt')`,
+			Message: `Usage: download <path> [dest] (path must be quoted, e.g., download "/file.txt" or download "/file.txt" ./local)`,
 		}
 	}
 
 	path := args[0]
+	destPath := ""
+	if len(args) >= 2 {
+		destPath = args[1]
+	}
 
-	// 先获取文件信息以获取文件ID
 	fileInfo, err := client.GetFileInfo(path)
 	if err != nil {
 		return &CLIResult{
@@ -674,7 +680,6 @@ func handleDownloadURL(client *sdk.QuarkClient, args []string) *CLIResult {
 			Message: fmt.Sprintf("failed to get file info: %v", err),
 		}
 	}
-
 	if !fileInfo.Success {
 		return &CLIResult{
 			Success: false,
@@ -683,7 +688,6 @@ func handleDownloadURL(client *sdk.QuarkClient, args []string) *CLIResult {
 		}
 	}
 
-	// 获取文件ID
 	fid, ok := fileInfo.Data["fid"].(string)
 	if !ok || fid == "" {
 		return &CLIResult{
@@ -693,17 +697,68 @@ func handleDownloadURL(client *sdk.QuarkClient, args []string) *CLIResult {
 		}
 	}
 
-	// 检查是否为目录
 	isDir, _ := fileInfo.Data["dir"].(bool)
 	if isDir {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_FILE_TYPE",
-			Message: "cannot get download URL for directory",
+			Message: "cannot download directory",
 		}
 	}
 
-	// 获取下载链接
+	fileName, _ := fileInfo.Data["file_name"].(string)
+	if fileName == "" {
+		fileName = filepath.Base(path)
+	}
+	if fileName == "" || fileName == "." {
+		fileName = "download"
+	}
+
+	// 指定了 dest：下载到本地
+	if destPath != "" {
+		var lastProgress *sdk.DownloadProgress
+		var lastPrint time.Time
+		err = client.DownloadFile(fid, destPath, fileName, func(p *sdk.DownloadProgress) {
+			lastProgress = p
+			now := time.Now()
+			if now.Sub(lastPrint) < 500*time.Millisecond && p.Total >= 0 && p.Downloaded < p.Total {
+				return
+			}
+			lastPrint = now
+			if p.Total > 0 {
+				pct := float64(p.Downloaded) / float64(p.Total) * 100
+				fmt.Fprintf(os.Stderr, "\rDownloaded %.2f MB / %.2f MB (%.1f%%)", float64(p.Downloaded)/(1024*1024), float64(p.Total)/(1024*1024), pct)
+			} else {
+				fmt.Fprintf(os.Stderr, "\rDownloaded %.2f MB", float64(p.Downloaded)/(1024*1024))
+			}
+		})
+		if err != nil {
+			return &CLIResult{
+				Success: false,
+				Message: fmt.Sprintf("download failed: %v", err),
+			}
+		}
+		if lastProgress != nil && lastProgress.Total > 0 {
+			fmt.Fprintf(os.Stderr, "\rDownloaded %.2f MB / %.2f MB (100.0%%)\n", float64(lastProgress.Downloaded)/(1024*1024), float64(lastProgress.Total)/(1024*1024))
+		} else {
+			fmt.Fprintf(os.Stderr, "\n")
+		}
+		// 解析最终本地路径（与 SDK 逻辑一致）
+		localPath := destPath
+		if destPath == "" || destPath == "." || strings.HasSuffix(destPath, "/") || strings.HasSuffix(destPath, string(filepath.Separator)) {
+			localPath = filepath.Join(destPath, fileName)
+		} else if info, err := os.Stat(destPath); err == nil && info.IsDir() {
+			localPath = filepath.Join(destPath, fileName)
+		}
+		return &CLIResult{
+			Success: true,
+			Code:    "OK",
+			Message: "File downloaded successfully",
+			Data:    map[string]interface{}{"local_path": localPath, "path": path},
+		}
+	}
+
+	// 未指定 dest：仅返回下载链接
 	downloadURL, err := client.GetDownloadURL(fid)
 	if err != nil {
 		return &CLIResult{
@@ -711,18 +766,11 @@ func handleDownloadURL(client *sdk.QuarkClient, args []string) *CLIResult {
 			Message: fmt.Sprintf("failed to get download URL: %v", err),
 		}
 	}
-
-	data := map[string]interface{}{
-		"fid":          fid,
-		"path":         path,
-		"download_url": downloadURL,
-	}
-
 	return &CLIResult{
 		Success: true,
 		Code:    "OK",
 		Message: "Download URL retrieved successfully",
-		Data:    data,
+		Data:    map[string]interface{}{"fid": fid, "path": path, "download_url": downloadURL},
 	}
 }
 

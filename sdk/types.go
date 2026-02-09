@@ -109,21 +109,21 @@ type UploadProgress struct {
 
 // UploadState 上传状态（用于断点续传）
 type UploadState struct {
-	FilePath     string            `json:"file_path"`      // 本地文件路径
-	DestPath     string            `json:"dest_path"`      // 目标路径
-	FileSize     int64             `json:"file_size"`      // 文件大小
-	UploadID     string            `json:"upload_id"`      // OSS UploadID
-	TaskID       string            `json:"task_id"`        // 任务ID
-	Bucket       string            `json:"bucket"`         // OSS Bucket
-	ObjKey       string            `json:"obj_key"`         // OSS Object Key
-	UploadURL    string            `json:"upload_url"`     // 上传URL
-	PartSize     int64             `json:"part_size"`     // 分片大小
-	UploadedParts map[int]string   `json:"uploaded_parts"` // 已上传的分片：partNumber -> ETag
-	MimeType     string            `json:"mime_type"`     // MIME类型
-	AuthInfo     json.RawMessage   `json:"auth_info"`     // 认证信息
-	Callback     json.RawMessage   `json:"callback"`      // 回调信息
-	HashCtx      *HashCtx          `json:"hash_ctx,omitempty"` // SHA1增量哈希上下文
-	CreatedAt    time.Time         `json:"created_at"`     // 创建时间
+	FilePath      string          `json:"file_path"`          // 本地文件路径
+	DestPath      string          `json:"dest_path"`          // 目标路径
+	FileSize      int64           `json:"file_size"`          // 文件大小
+	UploadID      string          `json:"upload_id"`          // OSS UploadID
+	TaskID        string          `json:"task_id"`            // 任务ID
+	Bucket        string          `json:"bucket"`             // OSS Bucket
+	ObjKey        string          `json:"obj_key"`            // OSS Object Key
+	UploadURL     string          `json:"upload_url"`         // 上传URL
+	PartSize      int64           `json:"part_size"`          // 分片大小
+	UploadedParts map[int]string  `json:"uploaded_parts"`     // 已上传的分片：partNumber -> ETag
+	MimeType      string          `json:"mime_type"`          // MIME类型
+	AuthInfo      json.RawMessage `json:"auth_info"`          // 认证信息
+	Callback      json.RawMessage `json:"callback"`           // 回调信息
+	HashCtx       *HashCtx        `json:"hash_ctx,omitempty"` // SHA1增量哈希上下文
+	CreatedAt     time.Time       `json:"created_at"`         // 创建时间
 }
 
 // PreUploadResponse 预上传响应
@@ -156,15 +156,15 @@ type HashResponse struct {
 // HashCtx SHA1增量哈希上下文
 type HashCtx struct {
 	HashType string `json:"hash_type"` // "sha1"
-	H0       string `json:"h0"`       // SHA1的5个32位整数
+	H0       string `json:"h0"`        // SHA1的5个32位整数
 	H1       string `json:"h1"`
 	H2       string `json:"h2"`
 	H3       string `json:"h3"`
 	H4       string `json:"h4"`
-	Nl       string `json:"Nl"`       // 已处理的字节数
-	Nh       string `json:"Nh"`       // 哈希相关计数
-	Data     string `json:"data"`     // 未处理的数据
-	Num      string `json:"num"`      // 分片编号或其他计数
+	Nl       string `json:"Nl"`   // 已处理的字节数
+	Nh       string `json:"Nh"`   // 哈希相关计数
+	Data     string `json:"data"` // 未处理的数据
+	Num      string `json:"num"`  // 分片编号或其他计数
 }
 
 // AuthResponse 认证响应
@@ -251,13 +251,29 @@ type CreateShareResponse struct {
 	Data   map[string]interface{} `json:"data"`
 }
 
-// DownloadResponse 下载响应
+// DownloadResponse 下载响应（同步：直接返回 data 数组）
 type DownloadResponse struct {
 	Code   int `json:"code"`
 	Status int `json:"status"`
 	Data   []struct {
 		Fid         string `json:"fid"`          // 文件ID
 		DownloadURL string `json:"download_url"` // 下载链接
+	} `json:"data"`
+}
+
+// DownloadResponseAsync 下载响应（异步：返回 task_id，需轮询任务获取 download_url）
+type DownloadResponseAsync struct {
+	Code   int `json:"code"`
+	Status int `json:"status"`
+	Data   struct {
+		TaskID   string `json:"task_id"`
+		TaskSync bool   `json:"task_sync"`
+		TaskResp *struct {
+			Data []struct {
+				Fid         string `json:"fid"`
+				DownloadURL string `json:"download_url"`
+			} `json:"data"`
+		} `json:"task_resp"`
 	} `json:"data"`
 }
 
