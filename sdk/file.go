@@ -234,12 +234,9 @@ func (qc *QuarkClient) uploadPartsParallel(
 				}
 				etag, _, err := qc.upPart(pre, mimeType, job.partNumber, job.chunkData, job.hashCtx)
 				if err != nil {
-					select {
-					case resultCh <- uploadPartResult{
+					resultCh <- uploadPartResult{
 						partNumber: job.partNumber,
 						err:        fmt.Errorf("failed to upload part %d: %w", job.partNumber, err),
-					}:
-					default:
 					}
 					cancel()
 					return
@@ -276,12 +273,9 @@ func (qc *QuarkClient) uploadPartsParallel(
 				return
 			}
 			if err != nil {
-				select {
-				case resultCh <- uploadPartResult{
+				resultCh <- uploadPartResult{
 					partNumber: partNumber,
 					err:        fmt.Errorf("failed to read file chunk: %w", err),
-				}:
-				default:
 				}
 				cancel()
 				return
