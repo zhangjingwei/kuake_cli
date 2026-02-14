@@ -16,9 +16,29 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+const (
+	defaultUploadParallel = 4
+	maxUploadParallel     = 16
+)
+
+type uploadPartJob struct {
+	partNumber int
+	chunkData  []byte
+	hashCtx    *HashCtx
+}
+
+type uploadPartResult struct {
+	partNumber int
+	size       int64
+	etag       string
+	err        error
+}
 
 // getUploadStatePath 获取上传状态文件路径
 func getUploadStatePath(filePath, destPath string) string {
@@ -92,6 +112,255 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%ds", minutes, seconds)
 	}
 	return fmt.Sprintf("%ds", seconds)
+}
+
+func resolveUploadParallel(totalParts int) int {
+	parallel := defaultUploadParallel
+	if raw := strings.TrimSpace(os.Getenv("KUAKE_UPLOAD_PARALLEL")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			parallel = parsed
+		}
+	}
+
+	if parallel < 1 {
+		parallel = 1
+	}
+	if parallel > maxUploadParallel {
+		parallel = maxUploadParallel
+	}
+	if totalParts > 0 && parallel > totalParts {
+		parallel = totalParts
+	}
+	return parallel
+}
+
+func cloneHashCtx(hashCtx *HashCtx) *HashCtx {
+	if hashCtx == nil {
+		return nil
+	}
+	cloned := *hashCtx
+	return &cloned
+}
+
+func buildUploadProgressInfo(
+	uploaded int64,
+	total int64,
+	startTime time.Time,
+	lastUpdateTime *time.Time,
+	lastUploaded *int64,
+) *UploadProgress {
+	if uploaded < 0 {
+		uploaded = 0
+	}
+	if uploaded > total {
+		uploaded = total
+	}
+
+	progress := 0
+	if total > 0 {
+		progress = int(float64(uploaded) / float64(total) * 100)
+		if progress > 100 {
+			progress = 100
+		}
+	}
+
+	now := time.Now()
+	elapsed := now.Sub(startTime)
+
+	var speed float64
+	var remaining time.Duration
+
+	if !lastUpdateTime.IsZero() && elapsed > 0 {
+		deltaTime := now.Sub(*lastUpdateTime)
+		deltaUploaded := uploaded - *lastUploaded
+		if deltaTime > 0 {
+			speed = float64(deltaUploaded) / deltaTime.Seconds()
+		} else {
+			speed = float64(uploaded) / elapsed.Seconds()
+		}
+		if speed > 0 {
+			remainingBytes := total - uploaded
+			remaining = time.Duration(float64(remainingBytes)/speed) * time.Second
+		}
+	} else if elapsed > 0 {
+		speed = float64(uploaded) / elapsed.Seconds()
+		if speed > 0 {
+			remainingBytes := total - uploaded
+			remaining = time.Duration(float64(remainingBytes)/speed) * time.Second
+		}
+	}
+
+	*lastUpdateTime = now
+	*lastUploaded = uploaded
+
+	return &UploadProgress{
+		Progress:     progress,
+		Uploaded:     uploaded,
+		Total:        total,
+		Speed:        speed,
+		SpeedStr:     formatSpeed(speed),
+		Remaining:    remaining,
+		RemainingStr: formatDuration(remaining),
+		Elapsed:      elapsed,
+	}
+}
+
+func (qc *QuarkClient) uploadPartsParallel(
+	file *os.File,
+	pre *PreUploadResponse,
+	mimeType string,
+	partSize int64,
+	fileSize int64,
+	statePath string,
+	savedState *UploadState,
+	startTime time.Time,
+	progressCallback func(*UploadProgress),
+	uploadParallel int,
+) (map[int]string, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	jobCh := make(chan uploadPartJob, uploadParallel*2)
+	resultCh := make(chan uploadPartResult, uploadParallel*2)
+
+	var workerWG sync.WaitGroup
+	for i := 0; i < uploadParallel; i++ {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			for job := range jobCh {
+				if ctx.Err() != nil {
+					return
+				}
+				etag, _, err := qc.upPart(pre, mimeType, job.partNumber, job.chunkData, job.hashCtx)
+				if err != nil {
+					select {
+					case resultCh <- uploadPartResult{
+						partNumber: job.partNumber,
+						err:        fmt.Errorf("failed to upload part %d: %w", job.partNumber, err),
+					}:
+					default:
+					}
+					cancel()
+					return
+				}
+				select {
+				case resultCh <- uploadPartResult{
+					partNumber: job.partNumber,
+					size:       int64(len(job.chunkData)),
+					etag:       etag,
+				}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobCh)
+
+		partNumber := 1
+		cumulativeHash := sha1.New()
+		var hashCtx *HashCtx
+		var processedBytes int64
+
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+
+			chunk := make([]byte, partSize)
+			n, err := file.Read(chunk)
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				select {
+				case resultCh <- uploadPartResult{
+					partNumber: partNumber,
+					err:        fmt.Errorf("failed to read file chunk: %w", err),
+				}:
+				default:
+				}
+				cancel()
+				return
+			}
+			if n == 0 {
+				return
+			}
+
+			chunk = chunk[:n]
+			var currentHashCtx *HashCtx
+			if partNumber >= 2 {
+				currentHashCtx = cloneHashCtx(hashCtx)
+			}
+
+			hashCtx, _ = updateHashCtxFromHash(cumulativeHash, chunk, processedBytes)
+			processedBytes += int64(len(chunk))
+
+			job := uploadPartJob{
+				partNumber: partNumber,
+				chunkData:  chunk,
+				hashCtx:    currentHashCtx,
+			}
+
+			select {
+			case jobCh <- job:
+			case <-ctx.Done():
+				return
+			}
+			partNumber++
+		}
+	}()
+
+	go func() {
+		workerWG.Wait()
+		close(resultCh)
+	}()
+
+	totalParts := int((fileSize + partSize - 1) / partSize)
+	uploadedPartMap := make(map[int]string, totalParts)
+	var uploadedBytes int64
+	var lastUpdateTime time.Time
+	var lastUploaded int64
+	var firstErr error
+
+	for result := range resultCh {
+		if result.err != nil {
+			if firstErr == nil {
+				firstErr = result.err
+				cancel()
+			}
+			continue
+		}
+
+		uploadedPartMap[result.partNumber] = result.etag
+		savedState.UploadedParts[result.partNumber] = result.etag
+		_ = saveUploadState(statePath, savedState)
+
+		uploadedBytes += result.size
+		if progressCallback != nil {
+			progressInfo := buildUploadProgressInfo(
+				uploadedBytes,
+				fileSize,
+				startTime,
+				&lastUpdateTime,
+				&lastUploaded,
+			)
+			progressCallback(progressInfo)
+		}
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	if len(uploadedPartMap) != totalParts {
+		return nil, fmt.Errorf("parallel upload incomplete: expected %d parts, got %d parts", totalParts, len(uploadedPartMap))
+	}
+
+	return uploadedPartMap, nil
 }
 
 // normalizePath 将路径标准化为 Unix 风格（使用 / 作为分隔符）
@@ -811,6 +1080,8 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		if lastUploaded > fileSize {
 			lastUploaded = fileSize
 		}
+		// 断点续传时将基准时间设为当前，避免速度计算混入历史已上传数据
+		lastUpdateTime = time.Now()
 		// 跳过已上传的分片
 		skipBytes := int64(startPartNumber-1) * partSize
 		if skipBytes > 0 {
@@ -883,199 +1154,171 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		hashCtx = nil // 第一个分片不需要HashCtx
 	}
 
-	partNumber := startPartNumber
-	for {
-		chunk := make([]byte, partSize)
-		n, err := file.Read(chunk)
-		if err == io.EOF {
-			break
+	totalParts := int((fileSize + partSize - 1) / partSize)
+	uploadParallel := resolveUploadParallel(totalParts)
+	canUseParallel := !useSavedState && startPartNumber == 1 && totalParts > 1 && uploadParallel > 1
+
+	buildUploadState := func(currentHashCtx *HashCtx) *UploadState {
+		return &UploadState{
+			FilePath:      filePath,
+			DestPath:      destPath,
+			FileSize:      fileSize,
+			UploadID:      pre.Data.UploadID,
+			TaskID:        pre.Data.TaskID,
+			Bucket:        pre.Data.Bucket,
+			ObjKey:        pre.Data.ObjKey,
+			UploadURL:     pre.Data.UploadURL,
+			PartSize:      partSize,
+			UploadedParts: make(map[int]string),
+			MimeType:      mimeType,
+			AuthInfo:      pre.Data.AuthInfo,
+			Callback:      pre.Data.Callback,
+			HashCtx:       currentHashCtx,
 		}
-		if err != nil {
-			// 上传失败，保存当前状态以便断点续传
-			if !useSavedState {
-				savedState = &UploadState{
-					FilePath:      filePath,
-					DestPath:      destPath,
-					FileSize:      fileSize,
-					UploadID:      pre.Data.UploadID,
-					TaskID:        pre.Data.TaskID,
-					Bucket:        pre.Data.Bucket,
-					ObjKey:        pre.Data.ObjKey,
-					UploadURL:     pre.Data.UploadURL,
-					PartSize:      partSize,
-					UploadedParts: make(map[int]string),
-					MimeType:      mimeType,
-					AuthInfo:      pre.Data.AuthInfo,
-					Callback:      pre.Data.Callback,
-					HashCtx:       hashCtx,
-				}
-			} else {
-				savedState.HashCtx = hashCtx
-			}
-			// 保存已上传的分片
-			for i, etag := range etags {
-				savedState.UploadedParts[i+1] = etag
-			}
-			saveUploadState(statePath, savedState)
+	}
 
-			return &StandardResponse{
-				Success: false,
-				Code:    "READ_FILE_ERROR",
-				Message: fmt.Sprintf("failed to read file chunk: %v", err),
-				Data:    nil,
-			}, nil
-		}
+	if canUseParallel {
+		savedState = buildUploadState(nil)
 
-		if n == 0 {
-			break
-		}
-
-		chunk = chunk[:n]
-
-		// 上传分片（partNumber >= 2 时需要传递 hashCtx）
-		var currentHashCtx *HashCtx
-		if partNumber >= 2 {
-			currentHashCtx = hashCtx
-		}
-
-		etag, _, err := qc.upPart(pre, mimeType, partNumber, chunk, currentHashCtx)
-		if err != nil {
-			// 上传失败，保存当前状态以便断点续传
-			if !useSavedState {
-				savedState = &UploadState{
-					FilePath:      filePath,
-					DestPath:      destPath,
-					FileSize:      fileSize,
-					UploadID:      pre.Data.UploadID,
-					TaskID:        pre.Data.TaskID,
-					Bucket:        pre.Data.Bucket,
-					ObjKey:        pre.Data.ObjKey,
-					UploadURL:     pre.Data.UploadURL,
-					PartSize:      partSize,
-					UploadedParts: make(map[int]string),
-					MimeType:      mimeType,
-					AuthInfo:      pre.Data.AuthInfo,
-					Callback:      pre.Data.Callback,
-					HashCtx:       hashCtx,
-				}
-			} else {
-				savedState.HashCtx = hashCtx
-			}
-			// 保存已上传的分片
-			for i, etag := range etags {
-				savedState.UploadedParts[i+1] = etag
-			}
-			saveUploadState(statePath, savedState)
-
+		uploadedPartMap, uploadErr := qc.uploadPartsParallel(
+			file,
+			pre,
+			mimeType,
+			partSize,
+			fileSize,
+			statePath,
+			savedState,
+			startTime,
+			progressCallback,
+			uploadParallel,
+		)
+		if uploadErr != nil {
 			return &StandardResponse{
 				Success: false,
 				Code:    "UPLOAD_PART_ERROR",
-				Message: fmt.Sprintf("failed to upload part %d: %v", partNumber, err),
+				Message: uploadErr.Error(),
 				Data:    nil,
 			}, nil
 		}
 
-		etags = append(etags, etag)
-
-		// 更新累积的SHA1哈希对象和HashCtx（为下一个分片准备）
-		if cumulativeHash != nil {
-			hashCtx, _ = updateHashCtxFromHash(cumulativeHash, chunk, processedBytes)
-			processedBytes += int64(len(chunk))
+		etags = make([]string, totalParts)
+		for i := 1; i <= totalParts; i++ {
+			etag, ok := uploadedPartMap[i]
+			if !ok {
+				return &StandardResponse{
+					Success: false,
+					Code:    "UPLOAD_PART_ERROR",
+					Message: fmt.Sprintf("parallel upload missing part %d", i),
+					Data:    nil,
+				}, nil
+			}
+			etags[i-1] = etag
 		}
-
-		// 更新上传状态
-		if !useSavedState {
-			savedState = &UploadState{
-				FilePath:      filePath,
-				DestPath:      destPath,
-				FileSize:      fileSize,
-				UploadID:      pre.Data.UploadID,
-				TaskID:        pre.Data.TaskID,
-				Bucket:        pre.Data.Bucket,
-				ObjKey:        pre.Data.ObjKey,
-				UploadURL:     pre.Data.UploadURL,
-				PartSize:      partSize,
-				UploadedParts: make(map[int]string),
-				MimeType:      mimeType,
-				AuthInfo:      pre.Data.AuthInfo,
-				Callback:      pre.Data.Callback,
-				HashCtx:       hashCtx,
+	} else {
+		partNumber := startPartNumber
+		for {
+			chunk := make([]byte, partSize)
+			n, err := file.Read(chunk)
+			if err == io.EOF {
+				break
 			}
-		} else {
-			savedState.HashCtx = hashCtx
-		}
-		savedState.UploadedParts[partNumber] = etag
-		// 每上传一个分片后保存状态
-		saveUploadState(statePath, savedState)
-
-		// 更新进度
-		if progressCallback != nil {
-			now := time.Now()
-			uploaded := int64(partNumber) * int64(partSize)
-			if uploaded > fileSize {
-				uploaded = fileSize
-			}
-
-			progress := int(float64(uploaded) / float64(fileSize) * 100)
-			if progress > 100 {
-				progress = 100
-			}
-
-			elapsed := now.Sub(startTime)
-
-			// 计算速度（使用最近一次更新的数据，避免初始速度不稳定）
-			var speed float64
-			var remaining time.Duration
-
-			if !lastUpdateTime.IsZero() && elapsed > 0 {
-				// 使用最近一次更新后的数据计算速度
-				deltaTime := now.Sub(lastUpdateTime)
-				deltaUploaded := uploaded - lastUploaded
-				if deltaTime > 0 {
-					speed = float64(deltaUploaded) / deltaTime.Seconds()
+			if err != nil {
+				// 上传失败，保存当前状态以便断点续传
+				if savedState == nil {
+					savedState = buildUploadState(hashCtx)
 				} else {
-					// 如果时间间隔太小，使用总体速度
-					speed = float64(uploaded) / elapsed.Seconds()
-				}
-
-				// 计算剩余时间
-				if speed > 0 {
-					remainingBytes := fileSize - uploaded
-					remaining = time.Duration(float64(remainingBytes)/speed) * time.Second
-				}
-			} else {
-				// 第一次更新，使用总体速度
-				if elapsed > 0 {
-					speed = float64(uploaded) / elapsed.Seconds()
-					if speed > 0 {
-						remainingBytes := fileSize - uploaded
-						remaining = time.Duration(float64(remainingBytes)/speed) * time.Second
+					savedState.HashCtx = hashCtx
+					if savedState.UploadedParts == nil {
+						savedState.UploadedParts = make(map[int]string)
 					}
 				}
+				// 保存已上传的分片
+				for i, etag := range etags {
+					savedState.UploadedParts[i+1] = etag
+				}
+				_ = saveUploadState(statePath, savedState)
+
+				return &StandardResponse{
+					Success: false,
+					Code:    "READ_FILE_ERROR",
+					Message: fmt.Sprintf("failed to read file chunk: %v", err),
+					Data:    nil,
+				}, nil
 			}
 
-			// 格式化速度和剩余时间
-			speedStr := formatSpeed(speed)
-			remainingStr := formatDuration(remaining)
-
-			progressInfo := &UploadProgress{
-				Progress:     progress,
-				Uploaded:     uploaded,
-				Total:        fileSize,
-				Speed:        speed,
-				SpeedStr:     speedStr,
-				Remaining:    remaining,
-				RemainingStr: remainingStr,
-				Elapsed:      elapsed,
+			if n == 0 {
+				break
 			}
 
-			progressCallback(progressInfo)
+			chunk = chunk[:n]
 
-			lastUpdateTime = now
-			lastUploaded = uploaded
+			// 上传分片（partNumber >= 2 时需要传递 hashCtx）
+			var currentHashCtx *HashCtx
+			if partNumber >= 2 {
+				currentHashCtx = hashCtx
+			}
+
+			etag, _, err := qc.upPart(pre, mimeType, partNumber, chunk, currentHashCtx)
+			if err != nil {
+				// 上传失败，保存当前状态以便断点续传
+				if savedState == nil {
+					savedState = buildUploadState(hashCtx)
+				} else {
+					savedState.HashCtx = hashCtx
+					if savedState.UploadedParts == nil {
+						savedState.UploadedParts = make(map[int]string)
+					}
+				}
+				// 保存已上传的分片
+				for i, uploadedEtag := range etags {
+					savedState.UploadedParts[i+1] = uploadedEtag
+				}
+				_ = saveUploadState(statePath, savedState)
+
+				return &StandardResponse{
+					Success: false,
+					Code:    "UPLOAD_PART_ERROR",
+					Message: fmt.Sprintf("failed to upload part %d: %v", partNumber, err),
+					Data:    nil,
+				}, nil
+			}
+
+			etags = append(etags, etag)
+
+			// 更新累积的SHA1哈希对象和HashCtx（为下一个分片准备）
+			if cumulativeHash != nil {
+				hashCtx, _ = updateHashCtxFromHash(cumulativeHash, chunk, processedBytes)
+				processedBytes += int64(len(chunk))
+			}
+
+			// 更新上传状态
+			if savedState == nil {
+				savedState = buildUploadState(hashCtx)
+			} else {
+				savedState.HashCtx = hashCtx
+				if savedState.UploadedParts == nil {
+					savedState.UploadedParts = make(map[int]string)
+				}
+			}
+			savedState.UploadedParts[partNumber] = etag
+			// 每上传一个分片后保存状态
+			_ = saveUploadState(statePath, savedState)
+
+			// 更新进度
+			if progressCallback != nil {
+				uploaded := int64(len(etags)) * partSize
+				progressInfo := buildUploadProgressInfo(
+					uploaded,
+					fileSize,
+					startTime,
+					&lastUpdateTime,
+					&lastUploaded,
+				)
+				progressCallback(progressInfo)
+			}
+
+			partNumber++
 		}
-
-		partNumber++
 	}
 
 	// 10. 提交上传
