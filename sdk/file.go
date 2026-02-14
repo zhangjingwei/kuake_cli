@@ -357,8 +357,19 @@ func (qc *QuarkClient) uploadPartsParallel(
 	return uploadedPartMap, nil
 }
 
+// stripQuotes 去掉路径参数中可能存在的首尾引号（处理 Git Bash 等特殊情况）
+// 某些 shell 或调用方式可能会保留引号，此函数用于统一处理
+func stripQuotes(path string) string {
+	path = strings.TrimSpace(path)
+	if len(path) >= 2 && path[0] == '"' && path[len(path)-1] == '"' {
+		path = path[1 : len(path)-1]
+	}
+	return path
+}
+
 // normalizePath 将路径标准化为 Unix 风格（使用 / 作为分隔符）
 func normalizePath(path string) string {
+	path = stripQuotes(path)
 	path = strings.ReplaceAll(path, "\\", "/")
 	for strings.Contains(path, "//") {
 		path = strings.ReplaceAll(path, "//", "/")
@@ -733,6 +744,7 @@ func (qc *QuarkClient) upFinish(pre *PreUploadResponse) (*FinishResponse, error)
 // UploadFile 上传文件到夸克网盘，支持大文件分片上传
 // progressCallback: 进度回调函数，如果为 nil 则不显示进度
 func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback func(*UploadProgress)) (*StandardResponse, error) {
+	filePath = stripQuotes(filePath)
 	file, err := os.Open(filePath)
 	if err != nil {
 		return &StandardResponse{
@@ -1376,6 +1388,7 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 
 // CreateFolder 创建文件夹
 func (qc *QuarkClient) CreateFolder(folderName, pdirFid string) (*StandardResponse, error) {
+	folderName = stripQuotes(folderName)
 	pdirFid = normalizeRootDir(pdirFid)
 
 	data := map[string]interface{}{
@@ -1770,6 +1783,7 @@ func (qc *QuarkClient) Move(srcPath, destPath string) (*StandardResponse, error)
 // newName: 新名称
 func (qc *QuarkClient) Rename(oldPath, newName string) (*StandardResponse, error) {
 	oldPath = normalizePath(oldPath)
+	newName = stripQuotes(newName)
 
 	// 获取文件/目录信息
 	fileInfo, err := qc.GetFileInfo(oldPath)
@@ -2047,12 +2061,7 @@ func (qc *QuarkClient) listByFid(pdirFid string, parentPath ...string) (*Standar
 
 // List 列出目录下的文件
 // dirPath: 目录路径（根目录使用 "/"）
-// 入口先去掉可能被 Windows/Git Bash 带入的首尾双引号并规范化路径，避免 list "/" 等被误判为 FID
 func (qc *QuarkClient) List(dirPath string) (*StandardResponse, error) {
-	dirPath = strings.TrimSpace(dirPath)
-	if len(dirPath) >= 2 && dirPath[0] == '"' && dirPath[len(dirPath)-1] == '"' {
-		dirPath = dirPath[1 : len(dirPath)-1]
-	}
 	dirPath = normalizePath(dirPath)
 	// 处理目录路径：根目录使用标准表示 "/"
 	var pdirFid string

@@ -35,11 +35,11 @@
 - **文件列表**: 列出夸克网盘指定目录下的所有文件和子目录
 - **文件信息**: 获取文件或目录的详细信息（大小、修改时间、路径等）
 - **下载链接**: 获取文件的下载链接
-- **文件上传**: 将本地文件上传到夸克网盘（支持大文件分片上传，支持断点续传和增量哈希）
+- **文件上传**: 将本地文件上传到夸克网盘（支持大文件分片上传，支持并行上传、断点续传和增量哈希）
 - **文件夹操作**: 创建文件夹
 - **文件操作**: 移动、复制、重命名文件或目录
 - **文件删除**: 删除夸克网盘中的文件或目录
-- **分享功能**: 创建分享链接，支持设置有效期和提取码；取消分享，支持通过 share_id 或文件路径取消分享
+- **分享功能**: 创建分享链接，支持设置有效期和提取码；取消分享，支持通过 share_id 或文件路径取消分享；转存分享文件到自己的网盘
 - **CLI 工具**: 提供命令行工具，方便其他进程调用
 
 ## 系统要求
@@ -68,15 +68,15 @@ chmod +x build.sh
 
 **Linux/macOS**:
 ```bash
-wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.6-linux-amd64
-chmod +x kuake-v1.3.6-linux-amd64
-./kuake-v1.3.6-linux-amd64 user
+wget https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.7-linux-amd64
+chmod +x kuake-v1.3.7-linux-amd64
+./kuake-v1.3.7-linux-amd64 user
 ```
 
 **Windows**:
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.6-windows-amd64.exe" -OutFile "kuake-v1.3.6-windows-amd64.exe"
-.\kuake-v1.3.6-windows-amd64.exe user
+Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/latest/download/kuake-v1.3.7-windows-amd64.exe" -OutFile "kuake-v1.3.7-windows-amd64.exe"
+.\kuake-v1.3.7-windows-amd64.exe user
 ```
 
 ## 快速开始
@@ -100,9 +100,9 @@ Invoke-WebRequest -Uri "https://github.com/zhangjingwei/kuake_sdk/releases/lates
 ### 2. 使用 CLI 工具
 
 ```bash
-./kuake-v1.3.6-linux-amd64 user
-./kuake-v1.3.6-linux-amd64 upload "file.txt" "/file.txt"
-./kuake-v1.3.6-linux-amd64 list "/"
+./kuake-v1.3.7-linux-amd64 user
+./kuake-v1.3.7-linux-amd64 upload "file.txt" "/file.txt"
+./kuake-v1.3.7-linux-amd64 list "/"
 ```
 
 ## 配置说明
@@ -151,7 +151,7 @@ kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 | `list [path]` | 列出目录内容（默认: "/"） | `kuake list "/"` |
 | `info <path>` | 获取文件/文件夹信息 | `kuake info "/file.txt"` |
 | `download <path>` | 获取文件下载链接 | `kuake download "/file.txt"` |
-| `upload <file> <dest>` | 上传文件（上传进度输出到 stderr） | `kuake upload "file.txt" "/file.txt"` |
+| `upload <file> <dest> [--max_upload_parallel N]` | 上传文件（上传进度输出到 stderr，支持并行上传） | `kuake upload "file.txt" "/file.txt"` 或 `kuake upload "file.txt" "/file.txt" --max_upload_parallel 4` |
 | `create <name> <pdir>` | 创建文件夹（pdir 为父目录路径，根目录使用 "/"） | `kuake create "test_folder" "/"` |
 | `move <src> <dest>` | 移动文件/文件夹 | `kuake move "/file.txt" "/folder/"` |
 | `copy <src> <dest>` | 复制文件/文件夹 | `kuake copy "/file.txt" "/folder/"` |
@@ -160,6 +160,7 @@ kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 | `share <path> <days> <passcode>` | 创建分享链接 | `kuake share "/file.txt" 7 "false"` |
 | `share-delete <share_id_or_path> [share_id_or_path2] ...` | 取消分享（支持通过 share_id 或文件路径） | `kuake share-delete "fdd8bfd93f21491ab80122538bec310d"` 或 `kuake share-delete "/file.txt"` |
 | `share-list [page] [size] [orderField] [orderType]` | 获取我的分享列表 | `kuake share-list` 或 `kuake share-list 1 50 "created_at" "desc"` |
+| `share-save <share_link> [passcode] [dest_dir]` | 转存分享文件到自己的网盘 | `kuake share-save "https://pan.quark.cn/s/xxx"` 或 `kuake share-save "https://pan.quark.cn/s/xxx" "1234" "/folder"` |
 | `help` | 显示帮助信息 | `kuake help` |
 
 **重要提示**：
@@ -167,6 +168,16 @@ kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 - 根目录使用 `"/"` 表示
 - `days` 参数：`0`=永久，`1`=1天，`7`=7天，`30`=30天
 - `passcode` 参数：`"true"`=需要提取码，`"false"`=不需要提取码
+- `share-save` 命令说明：
+  - `share_link`: 分享链接（如 `https://pan.quark.cn/s/xxx`），会自动提取 pwd_id
+  - `passcode`: 提取码（可选），如果分享链接中包含提取码会自动提取
+  - `dest_dir`: 目标目录（可选，默认 `"/"`），可以是路径或 FID
+  - 默认会转存分享中的所有文件到指定目录
+- **并行上传参数**：
+  - `--max_upload_parallel N`：设置并行上传的分片数量（1-16，默认 4）
+  - 也支持通过环境变量 `KUAKE_UPLOAD_PARALLEL` 设置
+  - 并行上传仅在满足条件时启用（新上传、多分片文件等）
+  - 断点续传时自动使用顺序上传，确保兼容性
 
 ### 输出格式
 
@@ -222,7 +233,14 @@ kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 # 获取文件下载链接
 ./kuake-{version}-{os}-{arch} download "/file.txt"
 
-# 上传文件
+# 上传文件（使用默认并行度 4）
+./kuake-{version}-{os}-{arch} upload "file.txt" "/file.txt"
+
+# 上传文件（指定并行度为 8）
+./kuake-{version}-{os}-{arch} upload "file.txt" "/file.txt" --max_upload_parallel 8
+
+# 上传文件（通过环境变量设置并行度）
+export KUAKE_UPLOAD_PARALLEL=8
 ./kuake-{version}-{os}-{arch} upload "file.txt" "/file.txt"
 
 # 创建文件夹（根目录）
@@ -261,6 +279,12 @@ kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 # 获取我的分享列表（指定分页和排序参数）
 ./kuake-{version}-{os}-{arch} share-list 1 50 "created_at" "desc"
 
+# 转存分享文件到根目录
+./kuake-{version}-{os}-{arch} share-save "https://pan.quark.cn/s/xxx"
+
+# 转存分享文件（指定提取码和目标目录）
+./kuake-{version}-{os}-{arch} share-save "https://pan.quark.cn/s/xxx" "1234" "/folder"
+
 # 查看帮助
 ./kuake-{version}-{os}-{arch} help
 ```
@@ -272,46 +296,41 @@ kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 
 ## 变更日志
 
+### v1.3.7
+
+- 新增并行上传功能，支持通过 `--max_upload_parallel` 参数或 `KUAKE_UPLOAD_PARALLEL` 环境变量配置并行度（1-16，默认 4）
+- 改进路径参数处理，明确要求所有路径参数必须用引号包裹
+- 新增转存分享文件功能，新增 `share-save` CLI 命令
+
 ### v1.3.6
 
-- **新增 X-Oss-Hash-Ctx 支持**：实现 OSS 分片上传的增量 SHA1 哈希上下文（X-Oss-Hash-Ctx header），确保与浏览器端行为一致
-- **改进断点续传功能**：断点续传现在支持 HashCtx 的保存和恢复，确保恢复上传时哈希上下文正确
+- 新增 X-Oss-Hash-Ctx 支持，实现 OSS 分片上传的增量 SHA1 哈希上下文
+- 改进断点续传功能，支持 HashCtx 的保存和恢复
 
 ### v1.3.5
 
-- **新增断点续传功能**：文件上传支持断点续传，上传中断后可自动恢复，避免重复上传已完成的片段
-- **改进上传进度显示**：上传进度回调现在显示上传速度、剩余时间等详细信息，提供更好的用户体验
-- **优化命令行参数解析**：支持 `-c/--config` 参数指定配置文件路径，改进参数解析逻辑
-- **改进配置文件路径解析**：配置文件路径解析优先使用当前工作目录，对开发模式更友好
-- **增强上传错误处理**：正确处理 OSS 分片已存在错误（409），支持从错误响应中提取 ETag
-- **改进目录创建逻辑**：优化目录创建流程，使用创建后的 FID 直接进行后续操作，提高效率
-- **增强上传超时处理**：为大文件上传设置合理的超时时间（分片上传30分钟，提交5分钟）
-- **改进分享创建错误处理**：分享创建失败时增加重试机制，尝试通过文件 FID 查找已创建的分享
-- **新增上传状态管理**：添加 `UploadProgress` 和 `UploadState` 类型，支持详细的上传进度和状态管理
+- 新增断点续传功能，上传中断后可自动恢复
+- 改进上传进度显示，显示上传速度、剩余时间等信息
+- 优化命令行参数解析，支持 `-c/--config` 参数指定配置文件路径
+- 增强上传错误处理和超时处理
+- 改进分享创建错误处理，增加重试机制
 
 ### v1.3.4
 
-- 修复配置文件读取路径问题：相对路径现在相对于可执行文件所在目录解析，而不是当前工作目录
-- 支持从可执行文件所在目录读取和保存配置文件，无论从哪个目录执行命令
-- 保持对绝对路径配置文件的完全支持
+- 修复配置文件读取路径问题，支持从可执行文件所在目录读取配置文件
 
 ### v1.3.3
 
 - 修复 Windows 路径处理问题，支持跨平台路径兼容性
-- 添加路径标准化函数，统一处理 Windows/Unix 路径格式
-- 修复文件操作函数中的路径处理问题
-- 新增路径处理相关测试用例
 
 ### v1.3.2
 
-- 新增取消分享功能，支持通过 share_id 或文件路径取消分享
-- 新增 `share-delete` CLI 命令
+- 新增取消分享功能，新增 `share-delete` CLI 命令
 
 ### v1.3.1
 
 - 修复 CLI 错误消息转义问题
 - 优化 API 错误响应处理
-- 修复类型断言安全性问题
 - 新增完整的单元测试套件
 
 ---
@@ -334,6 +353,7 @@ kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
   - 所有操作都通过夸克网盘 API 进行
   - 需要有效的 Cookie（access_token）才能使用
   - 上传操作支持进度显示（输出到 stderr）
+  - 上传操作支持并行上传，可通过 `--max_upload_parallel` 参数或 `KUAKE_UPLOAD_PARALLEL` 环境变量配置（1-16，默认 4）
   - 删除目录会递归删除所有子文件和子目录
 - **输出格式**：
   - CLI 工具的所有结果以 JSON 格式输出到 stdout，方便其他进程解析
