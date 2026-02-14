@@ -506,3 +506,13 @@ export KUAKE_UPLOAD_PARALLEL=8
 **商业使用授权**：如需商业使用，请联系项目维护者获得授权。
 
 ---
+
+## 贡献者
+
+感谢所有为项目做出贡献的开发者！
+
+- [@Cody292](https://github.com/Cody292) - 并行上传功能（PR #13）
+
+欢迎提交 Pull Request 或 Issue 来帮助改进项目！
+
+---
