@@ -166,7 +166,8 @@ Commands:
   list [path]                 List directory (default: "/")
   info <path>                 Get file/folder info
   download <path> [dest]      Get file download URL, or download to local file if dest given
-  upload <file> <dest>        Upload file (all parameters must be quoted)
+  upload <file> <dest> [--max_upload_parallel N]
+                              Upload file (all parameters must be quoted)
   create <name> <pdir>        Create folder (use "/" for root)
   move <src> <dest>           Move file/folder
   copy <src> <dest>           Copy file/folder
@@ -191,6 +192,7 @@ Examples:
   kuake download "/file.txt" .
   kuake download "/file.txt" ./local.zip
   kuake upload "file.txt" "/folder/file.txt"
+  kuake upload "file.txt" "/folder/file.txt" --max_upload_parallel 4
   kuake create "folder" "/"
   kuake move "/file.txt" "/folder/"
   kuake share "/file.txt" 7 "false"
@@ -202,6 +204,7 @@ Examples:
 Notes:
   - All path parameters must be quoted
   - Root directory is "/"
+  - Upload parallel can be set by --max_upload_parallel or env KUAKE_UPLOAD_PARALLEL (1-16, default 4)
   - Results output as JSON to stdout
   - Exit code: 0=success, 1=failure
 `)
@@ -256,12 +259,47 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: `Usage: upload <file> <dest> (all parameters must be quoted, e.g., upload 'file(1).txt' '/dest/file.txt')`,
+			Message: `Usage: upload <file> <dest> [--max_upload_parallel N] (all parameters must be quoted, e.g., upload 'file(1).txt' '/dest/file.txt' --max_upload_parallel 4)`,
 		}
 	}
 
 	filePath := args[0]
 	destPath := args[1]
+	var uploadParallel string
+
+	for i := 2; i < len(args); i++ {
+		switch args[i] {
+		case "--max_upload_parallel", "--max-upload-parallel", "--upload-parallel":
+			if i+1 >= len(args) {
+				return &CLIResult{
+					Success: false,
+					Code:    "INVALID_ARGS",
+					Message: "missing value for --max_upload_parallel",
+				}
+			}
+			value := strings.TrimSpace(args[i+1])
+			parallel, err := strconv.Atoi(value)
+			if err != nil || parallel < 1 {
+				return &CLIResult{
+					Success: false,
+					Code:    "INVALID_ARGS",
+					Message: "invalid --max_upload_parallel, must be integer >= 1",
+				}
+			}
+			uploadParallel = strconv.Itoa(parallel)
+			i++
+		default:
+			return &CLIResult{
+				Success: false,
+				Code:    "INVALID_ARGS",
+				Message: fmt.Sprintf("unknown upload option: %s", args[i]),
+			}
+		}
+	}
+
+	if uploadParallel != "" {
+		_ = os.Setenv("KUAKE_UPLOAD_PARALLEL", uploadParallel)
+	}
 
 	// 进度回调，显示上传进度、速度和剩余时间
 	progressCallback := func(progress *sdk.UploadProgress) {
