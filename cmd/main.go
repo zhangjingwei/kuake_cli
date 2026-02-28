@@ -17,8 +17,8 @@ const (
 	ExitError   = 1
 )
 
-// Version 版本号
-var Version = "v1.3.8"
+// Version 版本号，与编译产物名称一致
+var Version = "v1.3.11"
 
 type CLIResult struct {
 	Success bool                   `json:"success"`
@@ -85,6 +85,18 @@ func main() {
 			// 检查是否是帮助命令
 			if arg == "help" || arg == "-h" || arg == "--help" {
 				printUsage()
+				os.Exit(ExitSuccess)
+			}
+			// 检查是否是版本命令（在 QuarkClient 初始化之前拦截，无需配置文件）
+			if arg == "version" || arg == "-v" || arg == "--version" {
+				outputJSON(&CLIResult{
+					Success: true,
+					Code:    "OK",
+					Message: fmt.Sprintf("kuake %s", Version),
+					Data: map[string]interface{}{
+						"version": Version,
+					},
+				})
 				os.Exit(ExitSuccess)
 			}
 			command = arg
@@ -165,6 +177,16 @@ func main() {
 	case "help", "-h", "--help":
 		printUsage()
 		os.Exit(ExitSuccess)
+	case "version", "-v", "--version":
+		outputJSON(&CLIResult{
+			Success: true,
+			Code:    "OK",
+			Message: fmt.Sprintf("kuake %s", Version),
+			Data: map[string]interface{}{
+				"version": Version,
+			},
+		})
+		os.Exit(ExitSuccess)
 	default:
 		result = &CLIResult{
 			Success: false,
@@ -191,16 +213,17 @@ Usage:
   kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 
 Options:
-  -c, --config <path>    Specify config file path (default: config.json)
+  -c, --config <path>          Specify config file path (default: config.json)
   -cookies, --cookies <value>  Specify cookie value directly (automatically adds __pus= prefix, bypasses config file)
+  -v, --version                Show version information
 
 Commands:
   user                        Get user information
   list [path]                 List directory (default: "/")
   info <path>                 Get file/folder info
   download <path> [dest]      Get file download URL, or download to local file if dest given
-  upload <file> <dest> [--max_upload_parallel N]
-                              Upload file (all parameters must be quoted)
+  upload <file> <dest> [--policy <skip|overwrite|rsync>]
+                               Upload file (all parameters must be quoted)
   create <name> <pdir>        Create folder (use "/" for root)
   move <src> <dest>           Move file/folder
   copy <src> <dest>           Copy file/folder
@@ -219,6 +242,7 @@ Commands:
                                 share_link: share link (e.g., "https://pan.quark.cn/s/xxx")
                                 passcode: extraction code (optional, auto-extracted from link if present)
                                 dest_dir: destination directory (default: "/")
+  version                     Show version information
   help                           Show help
 
 Examples:
@@ -229,7 +253,7 @@ Examples:
   kuake download "/file.txt" .
   kuake download "/file.txt" ./local.zip
   kuake upload "file.txt" "/folder/file.txt"
-  kuake upload "file.txt" "/folder/file.txt" --max_upload_parallel 4
+  kuake upload "file.txt" "/folder/file.txt"
   kuake create "folder" "/"
   kuake move "/file.txt" "/folder/"
   kuake share "/file.txt" 7 "false"
@@ -239,7 +263,7 @@ Examples:
   kuake share-list 1 50 "created_at" "desc"
   kuake share-save "https://pan.quark.cn/s/xxx"
   kuake share-save "https://pan.quark.cn/s/xxx" "1234" "/folder"
-  
+
   # Using -cookies parameter (bypasses config file, only cookie value needed):
   kuake -cookies "your_cookie_value_here" user
   kuake -cookies "your_cookie_value_here" upload "file.txt" "/folder/file.txt"
@@ -247,7 +271,6 @@ Examples:
 Notes:
   - All path parameters must be quoted
   - Root directory is "/"
-  - Upload parallel can be set by --max_upload_parallel or env KUAKE_UPLOAD_PARALLEL (1-16, default 4)
   - Results output as JSON to stdout
   - Exit code: 0=success, 1=failure
   - When using -cookies, the config file is not read, improving efficiency and avoiding inconsistencies
@@ -303,34 +326,33 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 		return &CLIResult{
 			Success: false,
 			Code:    "INVALID_ARGS",
-			Message: `Usage: upload <file> <dest> [--max_upload_parallel N] (all parameters must be quoted, e.g., upload 'file(1).txt' '/dest/file.txt' --max_upload_parallel 4)`,
+			Message: `Usage: upload <file> <dest> [--policy <skip|overwrite|rsync>] (all parameters must be quoted)`,
 		}
 	}
 
 	filePath := args[0]
 	destPath := args[1]
-	var uploadParallel string
+	policy := sdk.UploadPolicySkip // 默认为 skip
 
 	for i := 2; i < len(args); i++ {
 		switch args[i] {
-		case "--max_upload_parallel", "--max-upload-parallel", "--upload-parallel":
+		case "--policy":
 			if i+1 >= len(args) {
 				return &CLIResult{
 					Success: false,
 					Code:    "INVALID_ARGS",
-					Message: "missing value for --max_upload_parallel",
+					Message: "missing value for --policy",
 				}
 			}
-			value := strings.TrimSpace(args[i+1])
-			parallel, err := strconv.Atoi(value)
-			if err != nil || parallel < 1 {
+			p := strings.TrimSpace(args[i+1])
+			if p != string(sdk.UploadPolicySkip) && p != string(sdk.UploadPolicyOverwrite) && p != string(sdk.UploadPolicyRsync) {
 				return &CLIResult{
 					Success: false,
 					Code:    "INVALID_ARGS",
-					Message: "invalid --max_upload_parallel, must be integer >= 1",
+					Message: "invalid --policy, must be one of: skip, overwrite, rsync",
 				}
 			}
-			uploadParallel = strconv.Itoa(parallel)
+			policy = sdk.UploadPolicy(p)
 			i++
 		default:
 			return &CLIResult{
@@ -339,10 +361,6 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 				Message: fmt.Sprintf("unknown upload option: %s", args[i]),
 			}
 		}
-	}
-
-	if uploadParallel != "" {
-		_ = os.Setenv("KUAKE_UPLOAD_PARALLEL", uploadParallel)
 	}
 
 	// 进度回调，显示上传进度、速度和剩余时间
@@ -363,7 +381,11 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 		}
 	}
 
-	response, err := client.UploadFile(filePath, destPath, progressCallback)
+	opts := &sdk.UploadOptions{
+		Policy: policy,
+	}
+
+	response, err := client.UploadFile(filePath, destPath, progressCallback, opts)
 	if err != nil {
 		return &CLIResult{
 			Success: false,

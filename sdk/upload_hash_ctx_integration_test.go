@@ -51,7 +51,7 @@ func TestUploadFileHashCtx_Integration(t *testing.T) {
 	response, err := client.UploadFile(tmpFile, "/test_hash_ctx_integration.bin", func(progress *UploadProgress) {
 		t.Logf("Upload progress: %d%%, Speed: %s, Remaining: %s",
 			progress.Progress, progress.SpeedStr, progress.RemainingStr)
-	})
+	}, nil)
 
 	if err != nil {
 		t.Fatalf("UploadFile() error = %v", err)
@@ -122,7 +122,7 @@ func TestUploadFileHashCtx_Resume(t *testing.T) {
 	response, err := client.UploadFile(tmpFile, "/test_hash_ctx_resume.bin", func(progress *UploadProgress) {
 		t.Logf("Upload progress: %d%%, Speed: %s, Remaining: %s",
 			progress.Progress, progress.SpeedStr, progress.RemainingStr)
-	})
+	}, nil)
 
 	if err != nil {
 		t.Logf("UploadFile() error (may be expected if interrupted): %v", err)

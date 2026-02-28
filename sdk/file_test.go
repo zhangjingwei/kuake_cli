@@ -127,22 +127,22 @@ func TestCreateFolder(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
+		name       string
 		folderName string
-		pdirFid   string
-		wantErr   bool
+		pdirFid    string
+		wantErr    bool
 	}{
 		{
-			name:      "create folder in root",
+			name:       "create folder in root",
 			folderName: "test_folder",
-			pdirFid:   "/",
-			wantErr:   false,
+			pdirFid:    "/",
+			wantErr:    false,
 		},
 		{
-			name:      "create folder with empty name",
+			name:       "create folder with empty name",
 			folderName: "",
-			pdirFid:   "/",
-			wantErr:   true,
+			pdirFid:    "/",
+			wantErr:    true,
 		},
 	}
 
@@ -290,16 +290,16 @@ func TestMove(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		srcPath string
+		name     string
+		srcPath  string
 		destPath string
-		wantErr bool
+		wantErr  bool
 	}{
 		{
-			name:    "move file",
-			srcPath: "/source.txt",
+			name:     "move file",
+			srcPath:  "/source.txt",
 			destPath: "/dest/",
-			wantErr: false,
+			wantErr:  false,
 		},
 	}
 
@@ -327,16 +327,16 @@ func TestCopy(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		srcPath string
+		name     string
+		srcPath  string
 		destPath string
-		wantErr bool
+		wantErr  bool
 	}{
 		{
-			name:    "copy file",
-			srcPath: "/source.txt",
+			name:     "copy file",
+			srcPath:  "/source.txt",
 			destPath: "/dest/",
-			wantErr: false,
+			wantErr:  false,
 		},
 	}
 
@@ -407,28 +407,28 @@ func TestUploadFile(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
+		name     string
 		filePath string
 		destPath string
-		wantErr bool
+		wantErr  bool
 	}{
 		{
-			name:    "upload file",
+			name:     "upload file",
 			filePath: tmpFile,
 			destPath: "/test_upload.txt",
-			wantErr: false,
+			wantErr:  false,
 		},
 		{
-			name:    "upload non-existent file",
+			name:     "upload non-existent file",
 			filePath: "/nonexistent/file.txt",
 			destPath: "/test.txt",
-			wantErr: true,
+			wantErr:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			response, err := client.UploadFile(tt.filePath, tt.destPath, nil)
+			response, err := client.UploadFile(tt.filePath, tt.destPath, nil, nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("UploadFile() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -460,7 +460,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"/source/file.txt", "/source/file.txt"},
 					{"\\source\\file.txt", "/source/file.txt"},
 				}
-				
+
 				for _, tt := range testPaths {
 					normalized := normalizePath(tt.input)
 					if normalized != tt.expect {
@@ -473,9 +473,9 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 			name: "test Move function path normalization",
 			testFunc: func(t *testing.T) {
 				testPaths := []struct {
-					src    string
-					dest   string
-					srcExp string
+					src     string
+					dest    string
+					srcExp  string
 					destExp string
 				}{
 					{"d:\\source\\file.txt", "d:\\dest\\", "d:/source/file.txt", "d:/dest"},
@@ -483,7 +483,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"/source/file.txt", "/dest/", "/source/file.txt", "/dest"},
 					{"\\source\\file.txt", "\\dest\\", "/source/file.txt", "/dest"},
 				}
-				
+
 				for _, tt := range testPaths {
 					srcNorm := normalizePath(tt.src)
 					destNorm := normalizePath(tt.dest)
@@ -508,7 +508,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"/old/file.txt", "/old/file.txt"},
 					{"\\old\\file.txt", "/old/file.txt"},
 				}
-				
+
 				for _, tt := range testPaths {
 					normalized := normalizePath(tt.oldPath)
 					if normalized != tt.expect {
@@ -530,7 +530,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"\\file.txt", "/file.txt"},
 					{"d:\\folder\\subfolder\\file.txt", "d:/folder/subfolder/file.txt"},
 				}
-				
+
 				for _, tt := range testPaths {
 					normalized := normalizePath(tt.path)
 					if normalized != tt.expect {
@@ -552,12 +552,12 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"parent", "file.txt", "parent/file.txt"},
 					{"/", "file.txt", "/file.txt"},
 				}
-				
+
 				for _, tt := range testCases {
 					joined := filepath.Join(tt.base, tt.name)
 					normalized := normalizePath(joined)
 					if normalized != tt.expect {
-						t.Errorf("normalizePath(filepath.Join(%q, %q)) = %q, want %q", 
+						t.Errorf("normalizePath(filepath.Join(%q, %q)) = %q, want %q",
 							tt.base, tt.name, normalized, tt.expect)
 					}
 				}
@@ -578,7 +578,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"d:/a/b/c.txt", "d:/a/b"},
 					{"d:\\a\\b\\c.txt", "d:/a/b"},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.path)
 					parentPath := normalized
@@ -594,9 +594,9 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 						parentPath = "/"
 					}
 					parentPath = normalizePath(parentPath)
-					
+
 					if parentPath != tt.expected {
-						t.Errorf("extractParentPath(%q) = %q, want %q (normalized: %q)", 
+						t.Errorf("extractParentPath(%q) = %q, want %q (normalized: %q)",
 							tt.path, parentPath, tt.expected, normalized)
 					}
 				}
@@ -614,7 +614,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"/a\\b/c", "/a/b/c"},
 					{"\\a/b\\c", "/a/b/c"},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.input)
 					if normalized != tt.expect {
@@ -635,7 +635,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"d:\\\\a\\\\b\\\\c", "d:/a/b/c"},
 					{"/a//b//c/", "/a/b/c"},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.input)
 					if normalized != tt.expect {
@@ -661,13 +661,13 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"d:/a/b/", "b"},
 					{"a.txt", "a.txt"},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.path)
 					baseName := filepath.Base(normalized)
 					// filepath.Base 在 Windows 上可能返回 Windows 风格的路径，需要再次标准化
 					baseName = normalizePath(baseName)
-					
+
 					// 对于标准化后的路径，filepath.Base 应该返回正确的文件名
 					// 但如果路径是 "/"，filepath.Base 在 Windows 上可能返回 "\"
 					if normalized == "/" {
@@ -684,7 +684,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 							}
 						}
 						if baseName != expected && baseName != normalizePath(expected) {
-							t.Errorf("filepath.Base(normalizePath(%q)) = %q, want %q (normalized: %q)", 
+							t.Errorf("filepath.Base(normalizePath(%q)) = %q, want %q (normalized: %q)",
 								tt.path, baseName, expected, normalized)
 						}
 					}
@@ -707,7 +707,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"d:\\a.mkv", "d:\\dest\\a.mkv", "d:/dest/a.mkv"},
 					{"C:\\Users\\test\\file.txt", "/file.txt", "/file.txt"},
 				}
-				
+
 				for _, tt := range testCases {
 					destNormalized := normalizePath(tt.destPath)
 					if destNormalized != tt.destExp {
@@ -732,7 +732,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"", ""},
 					{"/", "/"},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.dirPath)
 					if normalized != tt.expect {
@@ -755,7 +755,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"/", "/"},
 					{"", ""},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.pdirArg)
 					if normalized != tt.expect {
@@ -772,13 +772,13 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					expect string
 				}{
 					{"C:\\", "C:"}, // normalizePath 会移除尾部斜杠
-					{"C:/", "C:"}, // normalizePath 会移除尾部斜杠
+					{"C:/", "C:"},  // normalizePath 会移除尾部斜杠
 					{"C:\\a", "C:/a"},
 					{"C:/a", "C:/a"},
 					{"D:\\a\\b", "D:/a/b"},
 					{"Z:\\deep\\path\\to\\file.txt", "Z:/deep/path/to/file.txt"},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.path)
 					if normalized != tt.expect {
@@ -800,7 +800,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{"\\\\server\\share\\file.txt", "/server/share/file.txt"},
 					{"\\\\server\\share", "/server/share"},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.path)
 					if normalized != tt.expect {
@@ -832,7 +832,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					{".", ".", "当前目录表示保持不变"},
 					{"/.", "/.", "根目录下的点保持不变"},
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.path)
 					if normalized != tt.expect {
@@ -853,7 +853,7 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					"/home/user/file.txt",
 					"/var/log/app.log",
 				}
-				
+
 				for _, path := range unixPaths {
 					normalized := normalizePath(path)
 					// Unix 路径应该保持不变（除了合并斜杠和移除尾部斜杠）
@@ -865,12 +865,12 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 					if len(expected) > 1 && strings.HasSuffix(expected, "/") {
 						expected = strings.TrimSuffix(expected, "/")
 					}
-					
+
 					if normalized != expected {
-						t.Errorf("normalizePath(%q) = %q, want %q (Unix path should remain unchanged)", 
+						t.Errorf("normalizePath(%q) = %q, want %q (Unix path should remain unchanged)",
 							path, normalized, expected)
 					}
-					
+
 					// 测试 normalizeRootDir
 					if path == "/" || path == "" || path == "." {
 						rootDir := normalizeRootDir(path)
@@ -892,30 +892,30 @@ func TestPathNormalizationInFunctions(t *testing.T) {
 				// 确保原有的 Unix 路径行为没有被破坏
 				// 这些是典型的 Unix/Linux 路径格式
 				testCases := []struct {
-					original string
-					normalized string
+					original     string
+					normalized   string
 					shouldChange bool
 				}{
-					{"/", "/", false}, // 根目录不变
-					{"/a", "/a", false}, // 单层路径不变
-					{"/a/b", "/a/b", false}, // 多层路径不变
-					{"/a/b/", "/a/b", true}, // 尾部斜杠被移除（这是预期的）
-					{"/a//b", "/a/b", true}, // 多个斜杠被合并（这是预期的）
-					{"/home/user", "/home/user", false}, // 标准 Unix 路径不变
+					{"/", "/", false},                           // 根目录不变
+					{"/a", "/a", false},                         // 单层路径不变
+					{"/a/b", "/a/b", false},                     // 多层路径不变
+					{"/a/b/", "/a/b", true},                     // 尾部斜杠被移除（这是预期的）
+					{"/a//b", "/a/b", true},                     // 多个斜杠被合并（这是预期的）
+					{"/home/user", "/home/user", false},         // 标准 Unix 路径不变
 					{"/usr/local/bin", "/usr/local/bin", false}, // 系统路径不变
-					{"/tmp/file.txt", "/tmp/file.txt", false}, // 文件路径不变
+					{"/tmp/file.txt", "/tmp/file.txt", false},   // 文件路径不变
 				}
-				
+
 				for _, tt := range testCases {
 					normalized := normalizePath(tt.original)
 					if normalized != tt.normalized {
 						t.Errorf("normalizePath(%q) = %q, want %q", tt.original, normalized, tt.normalized)
 					}
-					
+
 					// 验证行为是否符合预期
 					changed := normalized != tt.original
 					if changed != tt.shouldChange {
-						t.Errorf("normalizePath(%q) changed=%v, want changed=%v", 
+						t.Errorf("normalizePath(%q) changed=%v, want changed=%v",
 							tt.original, changed, tt.shouldChange)
 					}
 				}

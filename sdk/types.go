@@ -95,6 +95,23 @@ type StandardResponse struct {
 	Data    map[string]interface{} `json:"data"`    // 响应数据
 }
 
+// UploadPolicy 上传去重策略
+type UploadPolicy string
+
+const (
+	// UploadPolicySkip 同名文件自动跳过（默认行为）
+	UploadPolicySkip UploadPolicy = "skip"
+	// UploadPolicyOverwrite 同名文件覆盖上传
+	UploadPolicyOverwrite UploadPolicy = "overwrite"
+	// UploadPolicyRsync 仅覆盖大小不同的同名文件
+	UploadPolicyRsync UploadPolicy = "rsync"
+)
+
+// UploadOptions 上传选项
+type UploadOptions struct {
+	Policy UploadPolicy // 去重策略（skip/overwrite/rsync），空字符串表示不检查
+}
+
 // UploadProgress 上传进度信息
 type UploadProgress struct {
 	Progress     int           `json:"progress"`      // 进度百分比 (0-100)
@@ -118,6 +135,7 @@ type UploadState struct {
 	ObjKey        string          `json:"obj_key"`            // OSS Object Key
 	UploadURL     string          `json:"upload_url"`         // 上传URL
 	PartSize      int64           `json:"part_size"`          // 分片大小
+	PartThread    int             `json:"part_thread"`        // 服务端并发线程数（parallel 模式恢复必需）
 	UploadedParts map[int]string  `json:"uploaded_parts"`     // 已上传的分片：partNumber -> ETag
 	MimeType      string          `json:"mime_type"`          // MIME类型
 	AuthInfo      json.RawMessage `json:"auth_info"`          // 认证信息
@@ -140,7 +158,8 @@ type PreUploadResponse struct {
 		Callback  json.RawMessage `json:"callback"`  // 可能是字符串或对象
 	} `json:"data"`
 	Metadata struct {
-		PartSize int64 `json:"part_size"`
+		PartSize   int64 `json:"part_size"`
+		PartThread int   `json:"part_thread"` // 服务端建议的并发线程数
 	}
 }
 

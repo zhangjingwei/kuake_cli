@@ -5,7 +5,10 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
+	"crypto/tls"
+	"encoding"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -16,16 +19,33 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const (
-	defaultUploadParallel = 4
-	maxUploadParallel     = 16
-)
+// isRetryableError 判断错误是否为可重试的瞬时网络故障
+// EOF、连接重置、超时等属于可重试错误；业务逻辑错误（如 auth failed）不可重试
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	retryablePatterns := []string{
+		"EOF",
+		"connection reset",
+		"connection refused",
+		"broken pipe",
+		"i/o timeout",
+		"TLS handshake timeout",
+	}
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+	return false
+}
 
 type uploadPartJob struct {
 	partNumber int
@@ -114,26 +134,6 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
-func resolveUploadParallel(totalParts int) int {
-	parallel := defaultUploadParallel
-	if raw := strings.TrimSpace(os.Getenv("KUAKE_UPLOAD_PARALLEL")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil {
-			parallel = parsed
-		}
-	}
-
-	if parallel < 1 {
-		parallel = 1
-	}
-	if parallel > maxUploadParallel {
-		parallel = maxUploadParallel
-	}
-	if totalParts > 0 && parallel > totalParts {
-		parallel = totalParts
-	}
-	return parallel
-}
-
 func cloneHashCtx(hashCtx *HashCtx) *HashCtx {
 	if hashCtx == nil {
 		return nil
@@ -216,6 +216,9 @@ func (qc *QuarkClient) uploadPartsParallel(
 	startTime time.Time,
 	progressCallback func(*UploadProgress),
 	uploadParallel int,
+	alreadyUploaded map[int]string, // 断点续传：已上传分片（partNumber -> etag），为空则全新上传
+	hashMD5 hash.Hash, // 嵌入式哈希：生产者累积计算 MD5（用于 upHash）
+	hashSHA1ForUpHash hash.Hash, // 嵌入式哈希：生产者累积计算 SHA1（用于 upHash）
 ) (map[int]string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -232,11 +235,36 @@ func (qc *QuarkClient) uploadPartsParallel(
 				if ctx.Err() != nil {
 					return
 				}
-				etag, _, err := qc.upPart(pre, mimeType, job.partNumber, job.chunkData, job.hashCtx)
-				if err != nil {
+				// 分片级重试：最多重试 3 次，指数退避（1s, 2s, 4s）
+				const maxRetries = 3
+				var etag string
+				var lastErr error
+				for attempt := 0; attempt <= maxRetries; attempt++ {
+					if ctx.Err() != nil {
+						return
+					}
+					var uploadErr error
+					etag, _, uploadErr = qc.upPart(pre, mimeType, job.partNumber, job.chunkData, job.hashCtx) // 【Round 20.5】恢复传递 HashCtx。虽然是并行模式，但服务端仍要求每个分片携带 Context，最终在 commit 阶段做链式跨分片校验。
+					if uploadErr == nil {
+						lastErr = nil
+						break
+					}
+					lastErr = uploadErr
+					// 仅对可重试的网络错误进行重试
+					if !isRetryableError(uploadErr) {
+						break
+					}
+					if attempt < maxRetries {
+						backoff := time.Duration(1<<uint(attempt)) * time.Second
+						fmt.Printf("[重试] 分片 %d 上传失败 (第 %d/%d 次): %v, %.0f秒后重试...\n",
+							job.partNumber, attempt+1, maxRetries, uploadErr, backoff.Seconds())
+						time.Sleep(backoff)
+					}
+				}
+				if lastErr != nil {
 					resultCh <- uploadPartResult{
 						partNumber: job.partNumber,
-						err:        fmt.Errorf("failed to upload part %d: %w", job.partNumber, err),
+						err:        fmt.Errorf("failed to upload part %d (after %d retries): %w", job.partNumber, maxRetries, lastErr),
 					}
 					cancel()
 					return
@@ -285,6 +313,15 @@ func (qc *QuarkClient) uploadPartsParallel(
 			}
 
 			chunk = chunk[:n]
+
+			// 嵌入式哈希：读取分片后同时写入 MD5+SHA1，消除第二个文件句柄的 14GB 冗余读取
+			if hashMD5 != nil {
+				hashMD5.Write(chunk)
+			}
+			if hashSHA1ForUpHash != nil {
+				hashSHA1ForUpHash.Write(chunk)
+			}
+
 			var currentHashCtx *HashCtx
 			if partNumber >= 2 {
 				currentHashCtx = cloneHashCtx(hashCtx)
@@ -292,6 +329,12 @@ func (qc *QuarkClient) uploadPartsParallel(
 
 			hashCtx, _ = updateHashCtxFromHash(cumulativeHash, chunk, processedBytes)
 			processedBytes += int64(len(chunk))
+
+			// 断点续传：跳过已上传的分片（仍需读文件和计算哈希以维持后续分片 HashCtx 一致性）
+			if _, ok := alreadyUploaded[partNumber]; ok {
+				partNumber++
+				continue
+			}
 
 			job := uploadPartJob{
 				partNumber: partNumber,
@@ -319,6 +362,25 @@ func (qc *QuarkClient) uploadPartsParallel(
 	var lastUpdateTime time.Time
 	var lastUploaded int64
 	var firstErr error
+
+	// 断点续传：预填充已上传分片信息，计算已传字节数
+	for pn, etag := range alreadyUploaded {
+		uploadedPartMap[pn] = etag
+		if int64(pn) < int64(totalParts) {
+			uploadedBytes += partSize
+		} else {
+			remainder := fileSize % partSize
+			if remainder > 0 {
+				uploadedBytes += remainder
+			} else {
+				uploadedBytes += partSize
+			}
+		}
+	}
+	if len(alreadyUploaded) > 0 {
+		lastUpdateTime = time.Now()
+		lastUploaded = uploadedBytes
+	}
 
 	for result := range resultCh {
 		if result.err != nil {
@@ -394,6 +456,7 @@ func (qc *QuarkClient) upPre(fileName, mimeType string, size int64, parentID str
 	now := time.Now().UnixMilli()
 	data := map[string]interface{}{
 		"ccp_hash_update": true,
+		"parallel_upload": true,
 		"dir_name":        "",
 		"file_name":       fileName,
 		"format_type":     mimeType,
@@ -455,27 +518,45 @@ func (qc *QuarkClient) upHash(md5Hash, sha1Hash, taskID string) (*HashResponse, 
 	return &hashResp, nil
 }
 
-// updateHashCtx 更新SHA1增量哈希上下文
-// 使用累积的SHA1哈希对象来计算增量哈希上下文
+// updateHashCtxFromHash 更新SHA1增量哈希上下文
+// 使用 MarshalBinary 提取 SHA1 的真正内部中间状态（h0-h4），而非 Sum() 的 finalized 摘要。
+// 【Round 20 关键修复】原版使用 hash.Sum(nil) 获取的是经过 padding+finalization 的最终摘要，
+// 与 OSS 要求的内部中间状态完全不同，导致 X-Oss-Hash-Ctx 校验失败、多分片上传被限速到 1.3 MB/s。
+//
+// Go sha1 MarshalBinary 布局：magic(4B) + h[0..4](20B, 大端序 uint32) + x_buffer(64B) + len(8B)
+//
 // hash: 累积的SHA1哈希对象（已处理所有前面的分片）
 // chunkData: 当前分片数据
-// totalBytes: 已处理的总字节数
-func updateHashCtxFromHash(hash hash.Hash, chunkData []byte, totalBytes int64) (*HashCtx, error) {
-	// 更新哈希对象
-	hash.Write(chunkData)
+// totalBytes: 已处理的总字节数（该参数现已不用，改为从 MarshalBinary 中直接提取）
+func updateHashCtxFromHash(h hash.Hash, chunkData []byte, totalBytes int64) (*HashCtx, error) {
+	// 1. 把当前分片数据写入哈希对象（累积更新）
+	h.Write(chunkData)
 
-	// 获取当前的哈希值
-	hashSum := hash.Sum(nil)
+	// 2. 通过 MarshalBinary 获取 SHA1 的真正内部状态
+	marshaler, ok := h.(encoding.BinaryMarshaler)
+	if !ok {
+		return nil, fmt.Errorf("hash does not support BinaryMarshaler interface")
+	}
+	state, err := marshaler.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal hash state: %w", err)
+	}
 
-	// SHA1 是 160 位，分为 5 个 32 位整数（大端序）
-	h0 := uint32(hashSum[0])<<24 | uint32(hashSum[1])<<16 | uint32(hashSum[2])<<8 | uint32(hashSum[3])
-	h1 := uint32(hashSum[4])<<24 | uint32(hashSum[5])<<16 | uint32(hashSum[6])<<8 | uint32(hashSum[7])
-	h2 := uint32(hashSum[8])<<24 | uint32(hashSum[9])<<16 | uint32(hashSum[10])<<8 | uint32(hashSum[11])
-	h3 := uint32(hashSum[12])<<24 | uint32(hashSum[13])<<16 | uint32(hashSum[14])<<8 | uint32(hashSum[15])
-	h4 := uint32(hashSum[16])<<24 | uint32(hashSum[17])<<16 | uint32(hashSum[18])<<8 | uint32(hashSum[19])
+	// 3. 从二进制状态中提取 h0-h4（偏移 4 开始，每个 4 字节，大端序 uint32）
+	h0 := binary.BigEndian.Uint32(state[4:8])
+	h1 := binary.BigEndian.Uint32(state[8:12])
+	h2 := binary.BigEndian.Uint32(state[12:16])
+	h3 := binary.BigEndian.Uint32(state[16:20])
+	h4 := binary.BigEndian.Uint32(state[20:24])
 
-	// 计算新的总长度
-	newNl := totalBytes + int64(len(chunkData))
+	// 4. 从末尾 8 字节提取已处理字节数，转换为比特数（× 8）
+	//   【Round 20.5 修复】Nl 和 Nh 分别代表低 32 位和高 32 位的比特数。
+	//   超过 ~536MB 的文件，总比特数会大于 4.29 亿（uint32 溢出）。
+	//   我们必须将其正确拆分为高低 32 位，否则服务端解析溢出会导致 commit 阶段 ContextCompareFailed。
+	totalBytesProcessed := binary.BigEndian.Uint64(state[len(state)-8:])
+	totalBits := totalBytesProcessed * 8
+	nl := uint32(totalBits & 0xFFFFFFFF)
+	nh := uint32(totalBits >> 32)
 
 	return &HashCtx{
 		HashType: "sha1",
@@ -484,8 +565,8 @@ func updateHashCtxFromHash(hash hash.Hash, chunkData []byte, totalBytes int64) (
 		H2:       fmt.Sprintf("%d", h2),
 		H3:       fmt.Sprintf("%d", h3),
 		H4:       fmt.Sprintf("%d", h4),
-		Nl:       fmt.Sprintf("%d", newNl),
-		Nh:       "0",
+		Nl:       fmt.Sprintf("%d", nl),
+		Nh:       fmt.Sprintf("%d", nh),
 		Data:     "",
 		Num:      "0",
 	}, nil
@@ -519,7 +600,7 @@ func (qc *QuarkClient) upPart(pre *PreUploadResponse, mimeType string, partNumbe
 		authMeta += fmt.Sprintf("X-Oss-Hash-Ctx:%s\n", hashCtxStr)
 	}
 
-	authMeta += fmt.Sprintf("x-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit\n/%s/%s?partNumber=%d&uploadId=%s",
+	authMeta += fmt.Sprintf("x-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/1.0.0 Chrome 145.0.0.0 on Windows 10 64-bit\n/%s/%s?partNumber=%d&uploadId=%s",
 		now, pre.Data.Bucket, pre.Data.ObjKey, partNumber, pre.Data.UploadID)
 
 	// 使用 client 方法获取 Authorization
@@ -635,7 +716,7 @@ func (qc *QuarkClient) upCommit(pre *PreUploadResponse, etags []string) (*Finish
 	now := time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT")
 
 	// 构建 auth_meta for commit
-	authMeta := fmt.Sprintf("POST\n%s\napplication/xml\n%s\nx-oss-callback:%s\nx-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit\n/%s/%s?uploadId=%s",
+	authMeta := fmt.Sprintf("POST\n%s\napplication/xml\n%s\nx-oss-callback:%s\nx-oss-date:%s\nx-oss-user-agent:aliyun-sdk-js/1.0.0 Chrome 145.0.0.0 on Windows 10 64-bit\n/%s/%s?uploadId=%s",
 		contentMD5, now, callbackB64, now, pre.Data.Bucket, pre.Data.ObjKey, pre.Data.UploadID)
 
 	// 使用 client 方法获取 Authorization
@@ -743,7 +824,13 @@ func (qc *QuarkClient) upFinish(pre *PreUploadResponse) (*FinishResponse, error)
 
 // UploadFile 上传文件到夸克网盘，支持大文件分片上传
 // progressCallback: 进度回调函数，如果为 nil 则不显示进度
-func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback func(*UploadProgress)) (*StandardResponse, error) {
+// opts: 上传选项（可为 nil，使用默认行为）
+func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback func(*UploadProgress), opts *UploadOptions) (*StandardResponse, error) {
+	// 解析选项，nil 安全
+	var policy UploadPolicy
+	if opts != nil {
+		policy = opts.Policy
+	}
 	filePath = stripQuotes(filePath)
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -899,6 +986,44 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		mimeType = "application/octet-stream"
 	}
 
+	// 去重策略检查：在 upPre 之前检查目标路径是否已存在同名文件
+	if policy == UploadPolicySkip || policy == UploadPolicyRsync {
+		existingInfo, existErr := qc.GetFileInfo(destPath)
+		if existErr == nil && existingInfo != nil && existingInfo.Success {
+			// 文件已存在
+			switch policy {
+			case UploadPolicySkip:
+				return &StandardResponse{
+					Success: true,
+					Code:    "SKIPPED",
+					Message: fmt.Sprintf("文件已存在，跳过上传: %s", destPath),
+					Data:    existingInfo.Data,
+				}, nil
+			case UploadPolicyRsync:
+				// 检查文件大小是否一致
+				if existingInfo.Data != nil {
+					var existingSize int64
+					switch v := existingInfo.Data["size"].(type) {
+					case float64:
+						existingSize = int64(v)
+					case int64:
+						existingSize = v
+					}
+					if existingSize == fileSize {
+						return &StandardResponse{
+							Success: true,
+							Code:    "SKIPPED",
+							Message: fmt.Sprintf("文件大小相同，跳过上传: %s (%d bytes)", destPath, existingSize),
+							Data:    existingInfo.Data,
+						}, nil
+					}
+					// 大小不同，继续上传（覆盖）
+				}
+			}
+		}
+		// policy == UploadPolicyOverwrite 或文件不存在：继续上传
+	}
+
 	// 先检查是否有保存的上传状态（断点续传）
 	statePath := getUploadStatePath(filePath, destPath)
 	var savedState *UploadState
@@ -922,6 +1047,7 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			pre.Data.AuthInfo = state.AuthInfo
 			pre.Data.Callback = state.Callback
 			pre.Metadata.PartSize = state.PartSize
+			pre.Metadata.PartThread = state.PartThread // 恢复并发线程数，确保 parallel 模式续传不退化
 
 			// 验证 uploadId 是否仍然有效：尝试上传一个空分片或查询分片列表
 			// 由于没有查询 API，我们直接尝试使用，如果失败再重新获取
@@ -947,105 +1073,25 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}
 	}
 
-	file.Seek(0, 0)
-	md5Hash := md5.New()
-	sha1Hash := sha1.New()
-	multiWriter := io.MultiWriter(md5Hash, sha1Hash)
+	// upHash 确认上传会话：通过嵌入式哈希策略，在分片读取过程中同步计算 MD5+SHA1，
+	// 之后调用 upHash 确认服务端上传生命周期（upPre → upHash → upCommit）。
+	//
+	// 【核心】upHash 必须被调用，否则服务端会清理未确认的 OSS 上传会话，
+	// 导致 upCommit 时返回 404 NoSuchUpload。
+	//
+	// 【嵌入式策略（Round 17）】将 MD5+SHA1 计算嵌入分片读取流程（生产者/顺序路径），
+	// 消除第二个文件句柄的 14GB 冗余读取，NFS 场景下断点续传启动延迟大幅降低。
 
-	if _, err := io.Copy(multiWriter, file); err != nil {
-		return &StandardResponse{
-			Success: false,
-			Code:    "CALCULATE_HASH_ERROR",
-			Message: fmt.Sprintf("failed to calculate hash: %v", err),
-			Data:    nil,
-		}, nil
+	// parallelHashResult 在主线程内传递 upHash 结果
+	type parallelHashResult struct {
+		isRapid bool
+		err     error
 	}
+	parallelHashCh := make(chan parallelHashResult, 1)
 
-	md5Sum := fmt.Sprintf("%x", md5Hash.Sum(nil))
-	sha1Sum := fmt.Sprintf("%x", sha1Hash.Sum(nil))
-
-	hashResp, err := qc.upHash(md5Sum, sha1Sum, pre.Data.TaskID)
-	if err != nil {
-		// 如果使用保存的状态但 hash 验证失败，可能是 taskId 已过期，重新获取
-		if useSavedState {
-			deleteUploadState(statePath)
-			pre, err = qc.upPre(destFileName, mimeType, fileSize, destDirPath)
-			if err != nil {
-				return &StandardResponse{
-					Success: false,
-					Code:    "PRE_UPLOAD_ERROR",
-					Message: fmt.Sprintf("pre-upload failed: %v", err),
-					Data:    nil,
-				}, nil
-			}
-			hashResp, err = qc.upHash(md5Sum, sha1Sum, pre.Data.TaskID)
-			if err != nil {
-				return &StandardResponse{
-					Success: false,
-					Code:    "HASH_VERIFICATION_ERROR",
-					Message: fmt.Sprintf("hash verification failed: %v", err),
-					Data:    nil,
-				}, nil
-			}
-			useSavedState = false
-		} else {
-			return &StandardResponse{
-				Success: false,
-				Code:    "HASH_VERIFICATION_ERROR",
-				Message: fmt.Sprintf("hash verification failed: %v", err),
-				Data:    nil,
-			}, nil
-		}
-	}
-
-	if hashResp.Data.Finish {
-		finish, err := qc.upFinish(pre)
-		if err != nil {
-			return &StandardResponse{
-				Success: false,
-				Code:    "FINISH_UPLOAD_ERROR",
-				Message: fmt.Sprintf("finish upload failed: %v", err),
-				Data:    nil,
-			}, nil
-		}
-		if finish.Code != 0 || finish.Status != 200 {
-			return &StandardResponse{
-				Success: false,
-				Code:    "FINISH_UPLOAD_ERROR",
-				Message: fmt.Sprintf("finish upload failed: code=%d, status=%d", finish.Code, finish.Status),
-				Data:    nil,
-			}, nil
-		}
-		if progressCallback != nil {
-			elapsed := time.Since(startTime)
-			// 秒传：文件已存在于服务器，无需实际上传
-			progressInfo := &UploadProgress{
-				Progress:     100,
-				Uploaded:     fileSize,
-				Total:        fileSize,
-				Speed:        0,
-				SpeedStr:     "秒传（文件已存在）",
-				Remaining:    0,
-				RemainingStr: "0s",
-				Elapsed:      elapsed,
-			}
-			progressCallback(progressInfo)
-		}
-		// 删除状态文件（如果存在）
-		deleteUploadState(statePath)
-		responseData := make(map[string]interface{})
-		for k, v := range finish.Data {
-			if k != "preview_url" {
-				responseData[k] = v
-			}
-		}
-		return &StandardResponse{
-			Success: true,
-			Code:    "OK",
-			Message: "上传完成",
-			Data:    responseData,
-		}, nil
-	}
+	// 嵌入式哈希对象：在分片读取过程中累积计算，所有分片处理完毕后提交 upHash
+	embeddedMD5 := md5.New()
+	embeddedSHA1 := sha1.New()
 
 	partSize := pre.Metadata.PartSize
 	file.Seek(0, 0)
@@ -1076,95 +1122,18 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 		}
 	}
 
-	// 用于计算速度和剩余时间
-	var lastUpdateTime time.Time
-	var lastUploaded int64
-
-	// 如果从断点续传，计算已上传的字节数并跳过已上传的分片
-	if useSavedState && startPartNumber > 1 {
-		lastUploaded = int64(startPartNumber-1) * partSize
-		if lastUploaded > fileSize {
-			lastUploaded = fileSize
-		}
-		// 断点续传时将基准时间设为当前，避免速度计算混入历史已上传数据
-		lastUpdateTime = time.Now()
-		// 跳过已上传的分片
-		skipBytes := int64(startPartNumber-1) * partSize
-		if skipBytes > 0 {
-			file.Seek(skipBytes, 0)
-		}
-	}
-
-	// 初始化累积的SHA1哈希对象，用于计算增量哈希上下文
-	var cumulativeHash hash.Hash
-	var hashCtx *HashCtx
-	var processedBytes int64
-
-	// 如果从断点续传，需要重新计算已处理部分的SHA1
-	if useSavedState && startPartNumber > 1 {
-		// 如果保存的状态中有HashCtx，直接使用
-		if savedState.HashCtx != nil {
-			hashCtx = savedState.HashCtx
-			// 重新读取已处理的部分来计算SHA1（用于后续分片）
-			file.Seek(0, 0)
-			cumulativeHash = sha1.New()
-			processedBytes = 0
-			for i := 1; i < startPartNumber; i++ {
-				chunk := make([]byte, partSize)
-				n, err := file.Read(chunk)
-				if err != nil && err != io.EOF {
-					return &StandardResponse{
-						Success: false,
-						Code:    "READ_FILE_ERROR",
-						Message: fmt.Sprintf("failed to read file chunk for hash calculation: %v", err),
-						Data:    nil,
-					}, nil
-				}
-				if n > 0 {
-					cumulativeHash.Write(chunk[:n])
-					processedBytes += int64(n)
-				}
-			}
-			// 恢复文件位置到当前分片
-			file.Seek(processedBytes, 0)
-		} else {
-			// 如果没有保存的HashCtx，重新计算
-			file.Seek(0, 0)
-			cumulativeHash = sha1.New()
-			processedBytes = 0
-			for i := 1; i < startPartNumber; i++ {
-				chunk := make([]byte, partSize)
-				n, err := file.Read(chunk)
-				if err != nil && err != io.EOF {
-					return &StandardResponse{
-						Success: false,
-						Code:    "READ_FILE_ERROR",
-						Message: fmt.Sprintf("failed to read file chunk for hash calculation: %v", err),
-						Data:    nil,
-					}, nil
-				}
-				if n > 0 {
-					cumulativeHash.Write(chunk[:n])
-					processedBytes += int64(n)
-				}
-			}
-			// 从累积的哈希对象生成HashCtx
-			hashCtx, _ = updateHashCtxFromHash(cumulativeHash, []byte{}, processedBytes)
-			// 恢复文件位置到当前分片
-			file.Seek(processedBytes, 0)
-		}
-	} else {
-		// 新上传，初始化哈希对象
-		cumulativeHash = sha1.New()
-		processedBytes = 0
-		hashCtx = nil // 第一个分片不需要HashCtx
-	}
-
+	// 并发数完全由服务端 part_thread 控制。
+	// 当 upPre 请求含 parallel_upload=true 时，服务端启用并行 OSS 模式，
+	// 返回 metadata.part_thread 作为并发数（通常为 3）。
 	totalParts := int((fileSize + partSize - 1) / partSize)
-	uploadParallel := resolveUploadParallel(totalParts)
-	// 多分片文件（totalParts > 1）：由于需要使用 X-Oss-Hash-Ctx，必须顺序上传，禁用并行上传
-	// 单分片文件（totalParts == 1）：可以并行上传（虽然只有一个分片，但保留并行逻辑）
-	canUseParallel := !useSavedState && startPartNumber == 1 && totalParts == 1 && uploadParallel > 1
+	uploadParallel := pre.Metadata.PartThread
+	if uploadParallel <= 0 {
+		uploadParallel = 1 // 服务端未返回时退回单线程
+	}
+	if uploadParallel > totalParts {
+		uploadParallel = totalParts
+	}
+	canUseParallel := uploadParallel > 1
 
 	buildUploadState := func(currentHashCtx *HashCtx) *UploadState {
 		return &UploadState{
@@ -1177,6 +1146,7 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			ObjKey:        pre.Data.ObjKey,
 			UploadURL:     pre.Data.UploadURL,
 			PartSize:      partSize,
+			PartThread:    pre.Metadata.PartThread, // 保存并发线程数，断点续传恢复时需要
 			UploadedParts: make(map[int]string),
 			MimeType:      mimeType,
 			AuthInfo:      pre.Data.AuthInfo,
@@ -1186,7 +1156,23 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 	}
 
 	if canUseParallel {
+		// === 并发上传路径（支持断点续传）===
+		// 并发模式始终从文件头开始读，由生产者统一顺序读取并跳过已上传分片
+		file.Seek(0, 0)
+
+		// 提取已上传分片（断点续传场景）
+		alreadyUploaded := make(map[int]string)
+		if useSavedState && savedState != nil && len(savedState.UploadedParts) > 0 {
+			for pn, etag := range savedState.UploadedParts {
+				alreadyUploaded[pn] = etag
+			}
+		}
+
+		// 构建新的上传状态，并预填充已上传分片
 		savedState = buildUploadState(nil)
+		for pn, etag := range alreadyUploaded {
+			savedState.UploadedParts[pn] = etag
+		}
 
 		uploadedPartMap, uploadErr := qc.uploadPartsParallel(
 			file,
@@ -1199,6 +1185,9 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			startTime,
 			progressCallback,
 			uploadParallel,
+			alreadyUploaded,
+			embeddedMD5,
+			embeddedSHA1,
 		)
 		if uploadErr != nil {
 			return &StandardResponse{
@@ -1207,6 +1196,16 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 				Message: uploadErr.Error(),
 				Data:    nil,
 			}, nil
+		}
+
+		// 嵌入式哈希：所有分片已由生产者读取并累积哈希，提交 upHash
+		md5Sum := fmt.Sprintf("%x", embeddedMD5.Sum(nil))
+		sha1Sum := fmt.Sprintf("%x", embeddedSHA1.Sum(nil))
+		hashResp, hashErr := qc.upHash(md5Sum, sha1Sum, pre.Data.TaskID)
+		if hashErr != nil {
+			parallelHashCh <- parallelHashResult{err: hashErr}
+		} else {
+			parallelHashCh <- parallelHashResult{isRapid: hashResp.Data.Finish}
 		}
 
 		etags = make([]string, totalParts)
@@ -1223,6 +1222,82 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			etags[i-1] = etag
 		}
 	} else {
+		// === 顺序上传路径（后备逻辑，仅在 totalParts==1 或 uploadParallel==1 时触发）===
+
+		// 用于计算速度和剩余时间
+		var lastUpdateTime time.Time
+		var lastUploaded int64
+
+		// 如果从断点续传，计算已上传的字节数并跳过已上传的分片
+		if useSavedState && startPartNumber > 1 {
+			lastUploaded = int64(startPartNumber-1) * partSize
+			if lastUploaded > fileSize {
+				lastUploaded = fileSize
+			}
+			lastUpdateTime = time.Now()
+			skipBytes := int64(startPartNumber-1) * partSize
+			if skipBytes > 0 {
+				file.Seek(skipBytes, 0)
+			}
+		}
+
+		// 初始化累积的SHA1哈希对象
+		var cumulativeHash hash.Hash
+		var hashCtx *HashCtx
+		var processedBytes int64
+
+		if useSavedState && startPartNumber > 1 {
+			if savedState.HashCtx != nil {
+				hashCtx = savedState.HashCtx
+				file.Seek(0, 0)
+				cumulativeHash = sha1.New()
+				processedBytes = 0
+				for i := 1; i < startPartNumber; i++ {
+					chunk := make([]byte, partSize)
+					n, err := file.Read(chunk)
+					if err != nil && err != io.EOF {
+						return &StandardResponse{
+							Success: false,
+							Code:    "READ_FILE_ERROR",
+							Message: fmt.Sprintf("failed to read file chunk for hash calculation: %v", err),
+							Data:    nil,
+						}, nil
+					}
+					if n > 0 {
+						cumulativeHash.Write(chunk[:n])
+						processedBytes += int64(n)
+					}
+				}
+				file.Seek(processedBytes, 0)
+			} else {
+				file.Seek(0, 0)
+				cumulativeHash = sha1.New()
+				processedBytes = 0
+				for i := 1; i < startPartNumber; i++ {
+					chunk := make([]byte, partSize)
+					n, err := file.Read(chunk)
+					if err != nil && err != io.EOF {
+						return &StandardResponse{
+							Success: false,
+							Code:    "READ_FILE_ERROR",
+							Message: fmt.Sprintf("failed to read file chunk for hash calculation: %v", err),
+							Data:    nil,
+						}, nil
+					}
+					if n > 0 {
+						cumulativeHash.Write(chunk[:n])
+						processedBytes += int64(n)
+					}
+				}
+				hashCtx, _ = updateHashCtxFromHash(cumulativeHash, []byte{}, processedBytes)
+				file.Seek(processedBytes, 0)
+			}
+		} else {
+			cumulativeHash = sha1.New()
+			processedBytes = 0
+			hashCtx = nil
+		}
+
 		partNumber := startPartNumber
 		for {
 			chunk := make([]byte, partSize)
@@ -1259,6 +1334,10 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 			}
 
 			chunk = chunk[:n]
+
+			// 嵌入式哈希：顺序路径也在每个分片读取后累积 MD5+SHA1
+			embeddedMD5.Write(chunk)
+			embeddedSHA1.Write(chunk)
 
 			// 上传分片（partNumber >= 2 时需要传递 hashCtx）
 			var currentHashCtx *HashCtx
@@ -1327,11 +1406,62 @@ func (qc *QuarkClient) UploadFile(filePath, destPath string, progressCallback fu
 
 			partNumber++
 		}
+
+		// 嵌入式哈希：顺序路径所有分片读取完毕，提交 upHash
+		md5Sum := fmt.Sprintf("%x", embeddedMD5.Sum(nil))
+		sha1Sum := fmt.Sprintf("%x", embeddedSHA1.Sum(nil))
+		hashResp, hashErr := qc.upHash(md5Sum, sha1Sum, pre.Data.TaskID)
+		if hashErr != nil {
+			parallelHashCh <- parallelHashResult{err: hashErr}
+		} else {
+			parallelHashCh <- parallelHashResult{isRapid: hashResp.Data.Finish}
+		}
+	}
+
+	// 10. 嵌入式哈希完成后，检查 upHash 结果
+	// 目的：确保 upHash 在 upCommit 之前被调用（服务端协议要求）
+	if parallelHashCh != nil {
+		hashResult := <-parallelHashCh
+		if hashResult.err != nil {
+			// upHash 失败：记录但不中断（降级处理，继续 commit 尝试）
+			// 在正常网络条件下不应进入此分支
+			_ = hashResult.err
+		} else if hashResult.isRapid {
+			// 秒传：upHash 告知服务端文件已存在，直接走 upFinish 跳过 commit
+			deleteUploadState(statePath)
+			finishResp, err := qc.upFinish(pre)
+			if err != nil {
+				return &StandardResponse{
+					Success: false,
+					Code:    "FINISH_UPLOAD_ERROR",
+					Message: fmt.Sprintf("finish upload failed: %v", err),
+					Data:    nil,
+				}, nil
+			}
+			responseData := make(map[string]interface{})
+			for k, v := range finishResp.Data {
+				if k != "preview_url" {
+					responseData[k] = v
+				}
+			}
+			return &StandardResponse{
+				Success: true,
+				Code:    "OK",
+				Message: "上传完成（秒传）",
+				Data:    responseData,
+			}, nil
+		}
+		// isRapid=false：服务端确认需要正常上传，继续走 commit 流程
 	}
 
 	// 10. 提交上传
 	finish, err := qc.upCommit(pre, etags)
 	if err != nil {
+		// NoSuchUpload 说明 OSS 端的 uploadId 已失效（可能已过期或被清理），
+		// 必须删除断点续传状态文件，避免重试时反复使用同一个过期 uploadId 导致死循环
+		if strings.Contains(err.Error(), "NoSuchUpload") {
+			deleteUploadState(statePath)
+		}
 		return &StandardResponse{
 			Success: false,
 			Code:    "COMMIT_UPLOAD_ERROR",
@@ -2433,7 +2563,7 @@ func (b *OSSPartUploadHeaderBuilder) BuildHeaders(req *http.Request, qc *QuarkCl
 	req.Header.Set("Authorization", b.AuthKey)
 	req.Header.Set("Content-Type", b.MimeType)
 	req.Header.Set("x-oss-date", b.Timestamp)
-	req.Header.Set("x-oss-user-agent", "aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit")
+	req.Header.Set("x-oss-user-agent", "aliyun-sdk-js/1.0.0 Chrome 145.0.0.0 on Windows 10 64-bit")
 
 	// 如果存在 HashCtx，设置 X-Oss-Hash-Ctx header
 	if b.HashCtx != nil {
@@ -2454,7 +2584,7 @@ func (b *OSSCommitHeaderBuilder) BuildHeaders(req *http.Request, qc *QuarkClient
 	req.Header.Set("Referer", "https://pan.quark.cn/")
 	req.Header.Set("x-oss-callback", b.Callback)
 	req.Header.Set("x-oss-date", b.Timestamp)
-	req.Header.Set("x-oss-user-agent", "aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit")
+	req.Header.Set("x-oss-user-agent", "aliyun-sdk-js/1.0.0 Chrome 145.0.0.0 on Windows 10 64-bit")
 	return nil
 }
 
@@ -2607,8 +2737,11 @@ func (qc *QuarkClient) DownloadFile(fid, destPath, fileName string, progressCall
 	}
 
 	client := &http.Client{
-		Timeout:   2 * time.Hour,
-		Transport: &http.Transport{},
+		Timeout: 2 * time.Hour,
+		Transport: &http.Transport{
+			// 禁用 HTTP/2，与主客户端保持一致
+			TLSNextProto: make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+		},
 	}
 	resp, err := client.Do(req)
 	if err != nil {

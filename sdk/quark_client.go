@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +16,6 @@ import (
 
 // NewQuarkClient 创建夸克网盘客户端（支持多个 token）
 // configPath: 配置文件路径，如果为空则使用默认路径 DEFAULT_CONFIG_PATH
-// cookies: 可选的 cookies 字符串，如果提供则直接使用，否则从配置文件读取
 func NewQuarkClient(configPath string, cookies ...string) *QuarkClient {
 	var accessTokens []string
 	var initialToken string
@@ -58,8 +58,12 @@ func NewQuarkClient(configPath string, cookies ...string) *QuarkClient {
 		authCheckTimeout: 5 * time.Minute, // 默认5分钟内缓存认证检查结果
 		failedTokens:     make(map[int]bool),
 		Debug:            isDebugEnv, // 从环境变量读取，默认关闭
-		HttpClient: &http.Client{
-			Timeout: 30 * time.Second, // 普通 API 请求的超时时间，上传请求使用动态超时
+		HttpClient:       &http.Client{
+			// 不设全局超时，由各请求自行通过 context 控制超时。
+			// 原版使用 Timeout: 30s 会导致大文件上传中途超时失败。
+			// 改为：普通 API 请求在 makeRequest 中设 30s context 超时；
+			//       上传分片请求在 upPart 中设 30min context 超时；
+			//       提交上传请求在 upCommit 中设 5min context 超时。
 		},
 	}
 	// 解析 cookie
@@ -268,7 +272,11 @@ func (qc *QuarkClient) makeRequest(method, urlOrEndpoint string, body io.Reader,
 		reqURL = parsedURL.String()
 	}
 
-	req, err := http.NewRequest(method, reqURL, body)
+	// 为普通 API 请求设置 30 秒超时（上传分片请求不走此方法，有独立的超时控制）
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("create request failed: %w", err)
 	}
