@@ -14,7 +14,8 @@ const (
 
 // 用户信息
 const (
-	USER_INFO = "/account/info"
+	USER_INFO   = "/account/info"
+	MEMBER_INFO = "/1/clouddrive/member" // 会员与容量信息（返回 use_capacity / total_capacity）
 )
 
 // 文件上传
@@ -46,10 +47,10 @@ const (
 
 // 内容分享
 const (
-	SHARE                  = "/1/clouddrive/share"
-	SHARE_PASSWORD         = "/1/clouddrive/share/password"
-	SHARE_DELETE           = "/1/clouddrive/share/delete"
-	SHARE_MYPAGE_DETAIL    = "/1/clouddrive/share/mypage/detail"
+	SHARE               = "/1/clouddrive/share"
+	SHARE_PASSWORD      = "/1/clouddrive/share/password"
+	SHARE_DELETE        = "/1/clouddrive/share/delete"
+	SHARE_MYPAGE_DETAIL = "/1/clouddrive/share/mypage/detail"
 )
 
 // 任务状态

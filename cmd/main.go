@@ -17,8 +17,8 @@ const (
 	ExitError   = 1
 )
 
-// Version 版本号
-var Version = "v1.3.8"
+// Version 版本号，与编译产物名称一致
+var Version = "v1.3.9"
 
 type CLIResult struct {
 	Success bool                   `json:"success"`
@@ -85,6 +85,18 @@ func main() {
 			// 检查是否是帮助命令
 			if arg == "help" || arg == "-h" || arg == "--help" {
 				printUsage()
+				os.Exit(ExitSuccess)
+			}
+			// 检查是否是版本命令（在 QuarkClient 初始化之前拦截，无需配置文件）
+			if arg == "version" || arg == "-v" || arg == "--version" {
+				outputJSON(&CLIResult{
+					Success: true,
+					Code:    "OK",
+					Message: fmt.Sprintf("kuake %s", Version),
+					Data: map[string]interface{}{
+						"version": Version,
+					},
+				})
 				os.Exit(ExitSuccess)
 			}
 			command = arg
@@ -165,6 +177,16 @@ func main() {
 	case "help", "-h", "--help":
 		printUsage()
 		os.Exit(ExitSuccess)
+	case "version", "-v", "--version":
+		outputJSON(&CLIResult{
+			Success: true,
+			Code:    "OK",
+			Message: fmt.Sprintf("kuake %s", Version),
+			Data: map[string]interface{}{
+				"version": Version,
+			},
+		})
+		os.Exit(ExitSuccess)
 	default:
 		result = &CLIResult{
 			Success: false,
@@ -191,8 +213,9 @@ Usage:
   kuake <command> [config.json] [arguments...]  (deprecated: use -c instead)
 
 Options:
-  -c, --config <path>    Specify config file path (default: config.json)
+  -c, --config <path>          Specify config file path (default: config.json)
   -cookies, --cookies <value>  Specify cookie value directly (automatically adds __pus= prefix, bypasses config file)
+  -v, --version                Show version information
 
 Commands:
   user                        Get user information
@@ -219,6 +242,7 @@ Commands:
                                 share_link: share link (e.g., "https://pan.quark.cn/s/xxx")
                                 passcode: extraction code (optional, auto-extracted from link if present)
                                 dest_dir: destination directory (default: "/")
+  version                     Show version information
   help                           Show help
 
 Examples:
