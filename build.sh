@@ -81,6 +81,7 @@ echo ""
 
 # 构建各平台（Release 版本，不包含调试信息）
 build "linux" "amd64" "" ""
+build "linux" "arm64" "" ""
 build "darwin" "amd64" "" ""
 build "windows" "amd64" ".exe" ""
 
