@@ -56,8 +56,8 @@
 需要 Go 1.18+ 和 Git。
 
 ```bash
-git clone https://github.com/zhangjingwei/kuake_sdk.git
-cd kuake_sdk
+git clone https://github.com/zhangjingwei/kuake_cli.git
+cd kuake_cli
 chmod +x build.sh
 ./build.sh
 ```
