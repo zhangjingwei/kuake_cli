@@ -28,6 +28,17 @@ type CLIResult struct {
 	Data    map[string]interface{} `json:"data,omitempty"`
 }
 
+// isLegacyConfigArg keeps deprecated positional config support without
+// breaking commands whose first argument legitimately ends with .json.
+func isLegacyConfigArg(arg string) bool {
+	if filepath.Ext(arg) != ".json" {
+		return false
+	}
+
+	_, err := sdk.LoadConfig(arg)
+	return err == nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -103,8 +114,8 @@ func main() {
 			command = arg
 		} else {
 			// 后续参数是命令参数
-			// 如果第一个参数是 .json 文件（向后兼容），也作为配置文件
-			if len(args) == 0 && filepath.Ext(arg) == ".json" {
+			// 如果第一个参数是可识别的 kuake 配置文件（向后兼容），也作为配置文件
+			if len(args) == 0 && isLegacyConfigArg(arg) {
 				configPath = arg
 			} else {
 				args = append(args, arg)
@@ -620,7 +631,7 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 func handleList(client *sdk.QuarkClient, args []string) *CLIResult {
 	dirPath := "/"
 	streamMode := false
-	
+
 	// 解析参数，支持 --stream 选项
 	var filteredArgs []string
 	for i, arg := range args {
@@ -703,7 +714,7 @@ func handleInfo(client *sdk.QuarkClient, args []string) *CLIResult {
 				// 只有 fid 时，尝试直接使用（某些 API 可能支持）
 				targetPath = fid
 			}
-			
+
 			if targetPath == "" {
 				return &CLIResult{
 					Success: false,
@@ -968,7 +979,7 @@ func handleDelete(client *sdk.QuarkClient, args []string) *CLIResult {
 				// 尝试直接使用 fid 作为路径（某些情况下可能有效）
 				targetPath = fid
 			}
-			
+
 			if targetPath == "" {
 				return &CLIResult{
 					Success: false,
@@ -1121,7 +1132,7 @@ func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 				// 只有 fid 时，尝试直接使用
 				targetPath = fid
 			}
-			
+
 			if targetPath == "" {
 				return &CLIResult{
 					Success: false,

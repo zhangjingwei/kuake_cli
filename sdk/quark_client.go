@@ -30,7 +30,7 @@ func NewQuarkClient(configPath string, cookies ...string) *QuarkClient {
 		// 否则从配置文件加载
 		config, err := LoadConfig(configPath)
 		if err != nil {
-			panic("failed to load config file")
+			panic(fmt.Errorf("failed to load config file: %w", err))
 		}
 
 		accessTokens = config.Quark.AccessTokens
