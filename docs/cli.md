@@ -66,7 +66,7 @@ kuake [options] <command> [arguments...]
 | `list [path] [--stream]` | 列出目录内容（默认: "/"），使用 `--stream` 输出流式 JSON 用于管道模式 | `kuake list "/"` 或 `kuake list "/" --stream` |
 | `info <path>` | 获取文件/文件夹信息（支持管道模式） | `kuake info "/file.txt"` |
 | `download <path> [dest]` | 获取文件下载链接或下载到本地（支持管道模式） | `kuake download "/file.txt"` 或 `kuake download "/file.txt" ./local` |
-| `upload <file> <dest> [--max_upload_parallel N]` | 上传文件（上传进度输出到 stderr，支持并行上传） | `kuake upload "file.txt" "/file.txt"` 或 `kuake upload "file.txt" "/file.txt" --max_upload_parallel 4` |
+| `upload <file> <dest> [--max_upload_parallel N] [--policy skip\|overwrite\|rsync]` | 上传文件（上传进度输出到 stderr，支持并行上传与同名文件策略） | `kuake upload "file.txt" "/file.txt"` 或 `kuake upload "file.txt" "/file.txt" --policy overwrite` |
 | `create <name> <pdir>` | 创建文件夹（pdir 为父目录路径，根目录使用 "/"） | `kuake create "test_folder" "/"` |
 | `move <src> <dest>` | 移动文件/文件夹 | `kuake move "/file.txt" "/folder/"` |
 | `copy <src> <dest>` | 复制文件/文件夹 | `kuake copy "/file.txt" "/folder/"` |
@@ -88,6 +88,10 @@ kuake [options] <command> [arguments...]
   - `passcode`: 提取码（可选），如果分享链接中包含提取码会自动提取
   - `dest_dir`: 目标目录（可选，默认 `"/"`），可以是路径或 FID
   - 默认会转存分享中的所有文件到指定目录
+- **上传同名文件策略**：
+  - `--policy skip`：同名文件存在时跳过（默认）
+  - `--policy overwrite`：覆盖同名文件
+  - `--policy rsync`：仅当同名文件大小不同时覆盖；大小相同时跳过
 - **并行上传参数**：
   - `--max_upload_parallel N`：设置上传并行 worker 数（1–16）；**传入本 flag 时优先于**环境变量 `KUAKE_UPLOAD_PARALLEL`（CLI 会写入进程环境供 SDK 读取）
   - 未传 `--max_upload_parallel` 时，可由环境变量 `KUAKE_UPLOAD_PARALLEL`（1–16）控制；**均未设置时由服务端预上传返回的 `part_thread` 决定**（常见约 3）
@@ -151,11 +155,17 @@ kuake [options] <command> [arguments...]
 # 获取文件下载链接
 ./kuake-{version}-{os}-{arch} download "/file.txt"
 
-# 上传文件（使用默认并行度 4）
+# 上传文件（未指定并行度时使用服务端预上传返回的 `part_thread`）
 ./kuake-{version}-{os}-{arch} upload "file.txt" "/file.txt"
 
 # 上传文件（指定并行度为 8）
 ./kuake-{version}-{os}-{arch} upload "file.txt" "/file.txt" --max_upload_parallel 8
+
+# 上传文件（覆盖同名文件）
+./kuake-{version}-{os}-{arch} upload "file.txt" "/file.txt" --policy overwrite
+
+# 上传文件（仅当同名文件大小不同时覆盖）
+./kuake-{version}-{os}-{arch} upload "file.txt" "/file.txt" --policy rsync
 
 # 上传文件（通过环境变量设置并行度）
 export KUAKE_UPLOAD_PARALLEL=8
@@ -248,6 +258,7 @@ export KUAKE_UPLOAD_PARALLEL=8
   - 所有操作都通过夸克网盘 API 进行
   - 需要有效的 Cookie（access_token）才能使用
   - 上传操作支持进度显示（输出到 stderr）
+  - 上传同名文件策略：`--policy skip|overwrite|rsync`，默认 `skip`；`rsync` 仅在大小不同时覆盖
   - 上传并行度：未传 `--max_upload_parallel` 时可使用 `KUAKE_UPLOAD_PARALLEL`（1–16），由 SDK 读取并覆盖服务端 `part_thread`（且不超过分片总数）；**传入 `--max_upload_parallel` 时覆盖环境变量**；均未设置时由服务端 `part_thread` 决定
   - 删除目录会递归删除所有子文件和子目录
 - **输出格式**：

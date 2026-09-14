@@ -212,8 +212,8 @@ Commands:
                               Use --stream to output one JSON per line for pipeline mode
   info <path>                 Get file/folder info (supports pipe mode)
   download <path> [dest]      Get file download URL, or download to local file if dest given (supports pipe mode)
-  upload <file> <dest> [--max_upload_parallel N]
-                              Upload file (all parameters must be quoted)
+  upload <file> <dest> [--max_upload_parallel N] [--policy skip|overwrite|rsync]
+                              Upload file (default policy: skip; all parameters must be quoted)
   create <name> <pdir>        Create folder (use "/" for root)
   move <src> <dest>           Move file/folder
   copy <src> <dest>           Copy file/folder
@@ -244,6 +244,7 @@ Examples:
   kuake download "/file.txt" ./local.zip
   kuake upload "file.txt" "/folder/file.txt"
   kuake upload "file.txt" "/folder/file.txt" --max_upload_parallel 4
+  kuake upload "file.txt" "/folder/file.txt" --policy overwrite
   kuake create "folder" "/"
   kuake move "/file.txt" "/folder/"
   kuake share "/file.txt" 7 "false"
@@ -278,8 +279,9 @@ Pipeline Mode:
 Notes:
   - All path parameters must be quoted
   - Root directory is "/"
+  - Upload policy: --policy skip|overwrite|rsync controls same-name handling (default: skip); rsync overwrites only when size differs
   - Upload parallel: --max_upload_parallel overrides KUAKE_UPLOAD_PARALLEL when both apply; if only
-    env is set (1-16) it is used when the flag is omitted (default 4)
+    env is set (1-16) it is used when the flag is omitted; if neither is set, server pre-upload part_thread is used
   - Results output as JSON to stdout
   - Exit code: 0=success, 1=failure
   - If KUAKE_COOKIE is set (non-empty after trim), it wins over -cookies
