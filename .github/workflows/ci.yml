@@ -32,8 +32,12 @@ jobs:
           args: --timeout=5m
 
   test:
-    name: go test
-    runs-on: ubuntu-latest
+    name: go test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,5 +46,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: go test
+      - name: go test (Linux)
+        if: runner.os != 'Windows'
         run: go test ./... -count=1 -timeout=15m
+
+      # internal/guard currently has a known Windows failure on main. Keep the
+      # Windows coverage for every other package until that baseline issue is
+      # fixed separately.
+      - name: go test (Windows, excluding known internal/guard baseline failure)
+        if: runner.os == 'Windows'
+        run: go test ./cmd/... ./sdk/... ./mcp/... -count=1 -timeout=15m

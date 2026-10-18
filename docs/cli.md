@@ -29,6 +29,27 @@ kuake [options] <command> [arguments...]
 **选项**：
 - `-cookies, --cookies <value>`: 在 `KUAKE_COOKIE` 为空（或 trim 后为空）时指定 Cookie；与 `KUAKE_COOKIE` 走相同的规范化（裸串补 `__pus=`、含 `__puus=` 时不重复加 `__pus=`、末尾分号）
 
+### Cookie 持久化
+
+CLI 可以把当前环境中的 Cookie 保存到用户配置目录，之后无需重复 `export`：
+
+```bash
+export KUAKE_COOKIE='浏览器复制的完整 Cookie'
+kuake auth save
+unset KUAKE_COOKIE
+kuake auth status
+kuake user
+```
+
+默认路径为系统用户配置目录下的 `kuake/credentials.json`（Linux 通常为
+`~/.config/kuake/credentials.json`）。Linux/macOS 上配置目录权限为 `0700`、文件权限为
+`0600`；Windows 上目录和文件使用禁止继承的 ACL，仅向当前进程用户 SID 授予访问权限，
+不依赖 `os.Chmod` 模拟 Unix 权限。
+`KUAKE_CONFIG_DIR` 可以覆盖配置目录。使用 `kuake auth clear` 删除持久化凭证。
+`auth status` 仅输出 Cookie 名称，不输出任何值。
+
+凭证优先级：`KUAKE_COOKIE` > `KUAKE_PUS+KUAKE_PUUS` > `-cookies` > 持久化 Cookie。
+
 ### 环境变量参考
 
 仓库根目录提供 **[`.env.example`](../.env.example)**，可复制为 `.env` 后按需填写。`kuake` 在**解析完命令行之后**、创建客户端之前，若**当前工作目录**下存在 `.env` 则自动加载（已在进程环境中的键**不会被覆盖**，与 [godotenv](https://github.com/joho/godotenv) 的 `Load` 语义一致）。设置 **`KUAKE_LOAD_DOTENV=0`** 可关闭自动加载。仍可在 shell、`direnv` 或 CI 中事先 `export`，优先级高于 `.env` 文件中的默认值。
@@ -40,6 +61,7 @@ kuake [options] <command> [arguments...]
 | `KUAKE_PUS` | `kuake`（cmd），`kuake-mcp` | `__pus` 的**值**（不要写 `__pus=` 前缀） | 仅当 `KUAKE_COOKIE` 规范化后为空时使用；可与 `KUAKE_PUUS` 组合 |
 | `KUAKE_PUUS` | `kuake`（cmd），`kuake-mcp` | `__puus` 的**值**（不要写 `__puus=` 前缀） | 同上；可单独使用（仅 `__puus`）或仅 `KUAKE_PUS` 或两者一起 |
 | `-cookies` / `--cookies` | `kuake`（cmd） | 同上 | 当 `KUAKE_COOKIE` 为空时使用；仍会通过 CLI 做与 env 相同的规范化（`__pus=`、分号） |
+| `KUAKE_CONFIG_DIR` | `kuake`（cmd） | 持久化凭证目录 | 未设置时使用系统用户配置目录下的 `kuake`；仅 CLI 读取 |
 | `KUAKE_UPLOAD_PARALLEL` | `kuake`（cmd，`upload`）与 SDK（`UploadFile`） | 上传并行 worker 数 1–16 | CLI：未传 `--max_upload_parallel` 时从本变量读取并 `Setenv`；**SDK：上传时若本变量合法则覆盖服务端 `part_thread`**，且不超过分片总数与 16；**命令行 flag 优先于**仅由 shell `export` 的值 |
 | `KUake_DEBUG` | SDK（`QuarkClient`） | 调试输出 | 设为 `1` 开启；变量名大小写以代码为准 |
 | `E2E_REGRESSION` / `INTEGRATION_TEST` | `go test ./sdk` | 启用端到端回归 `TestE2E_Regression_CoreFlow` | 置 `1` 后须提供 **`KUAKE_COOKIE` 或 `KUAKE_PUS`+`KUAKE_PUUS`**；测试会尝试加载 cwd 下的 `.env`；非 `kuake` 二进制行为 |
@@ -62,10 +84,11 @@ kuake [options] <command> [arguments...]
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
+| `auth <save\|status\|clear>` | 保存、检查或清除本地持久化 Cookie | `kuake auth save` |
 | `user` | 获取用户信息 | `kuake user` |
 | `list [path] [--stream]` | 列出目录内容（默认: "/"），使用 `--stream` 输出流式 JSON 用于管道模式 | `kuake list "/"` 或 `kuake list "/" --stream` |
 | `info <path>` | 获取文件/文件夹信息（支持管道模式） | `kuake info "/file.txt"` |
-| `download <path> [dest]` | 获取文件下载链接或下载到本地（支持管道模式） | `kuake download "/file.txt"` 或 `kuake download "/file.txt" ./local` |
+| `download <path> [dest] [--workers N]` | 下载文件或递归下载目录；目录下载支持并发与进度（支持管道模式） | `kuake download "/folder" ./local --workers 4` |
 | `upload <file> <dest> [--max_upload_parallel N]` | 上传文件（上传进度输出到 stderr，支持并行上传） | `kuake upload "file.txt" "/file.txt"` 或 `kuake upload "file.txt" "/file.txt" --max_upload_parallel 4` |
 | `create <name> <pdir>` | 创建文件夹（pdir 为父目录路径，根目录使用 "/"） | `kuake create "test_folder" "/"` |
 | `move <src> <dest>` | 移动文件/文件夹 | `kuake move "/file.txt" "/folder/"` |
@@ -81,6 +104,10 @@ kuake [options] <command> [arguments...]
 **重要提示**：
 - 所有路径参数必须用引号包裹（`"path"`）
 - 根目录使用 `"/"` 表示
+- 下载单文件时，`dest` 不带扩展名会自动创建/复用为目录；带扩展名时作为目标文件名
+- 下载远程目录时，`dest` 始终作为目录，即使目录名带扩展名；默认并发数为 4，可用 `--workers 1..16` 调整
+- 断点数据保存在系统用户缓存目录的 `kuake/downloads` 下，按远程文件 ID 与本地绝对路径隔离；再次执行相同命令会通过 HTTP Range 续传，不会占用正常的 `.part` 文件名。旧版 `.part` 与未完整最终文件不再自动作为断点使用，会保留并重新下载。完成时先复制到目标目录的临时文件再替换目标，因此需要额外磁盘空间。
+- 交互终端中的目录下载进度会原地刷新；重定向日志时每 5 秒输出一次整体进度，避免刷屏
 - `days` 参数：`0`=永久，`1`=1天，`7`=7天，`30`=30天
 - `passcode` 参数：`"true"`=需要提取码，`"false"`=不需要提取码
 - `share-save` 命令说明：

@@ -28,7 +28,7 @@
 - JSON 输出、管道模式（与 `jq` 等组合）；可选 **OpenClaw** 技能（见 [openclaw/kuake_skill/](openclaw/kuake_skill/)）：普通用户只需安装 [Releases](https://github.com/zhangjingwei/kuake_cli/releases) 中的 `kuake`、配置 `PATH` 与 `KUAKE_COOKIE`（说明见 [openclaw/kuake_skill/SKILL.md](openclaw/kuake_skill/SKILL.md) 与 [docs/cli.md](docs/cli.md)）
 - **`kuake-mcp` MCP server**：以 stdio 方式将 14 个网盘操作暴露为 MCP 工具，配合 Claude Code 等 MCP 客户端使用；通过 `KUAKE_DENY_OPS` / `KUAKE_DENY_PATHS` / `KUAKE_DENY_EXTS` / `KUAKE_MAX_UPLOAD_MB` / `KUAKE_DOWNLOAD_DIR` 等环境变量控制可执行的操作与沙箱（见 [.mcp.json.example](.mcp.json.example)）
 
-> **v1.5.0 BREAKING**：`config.json` 已不再支持，凭证只从 `KUAKE_COOKIE` / `KUAKE_PUS+KUAKE_PUUS` / `-cookies` 三种环境/参数方式读取；`-c, --config` 选项已移除。升级请将原 `config.json` 中的 token 改写为 `.env` 中的 `KUAKE_COOKIE`。
+凭证优先从 `KUAKE_COOKIE` / `KUAKE_PUS+KUAKE_PUUS` / `-cookies` 读取；CLI 也可用 `kuake auth save` 将当前环境中的 Cookie 持久化到用户配置目录。旧版 `config.json` 与 `-c, --config` 仍不支持。
 
 更多用法见 [docs/cli.md](docs/cli.md)。环境变量模板见 [.env.example](.env.example)；存在 `.env` 时 `kuake` 会从当前工作目录加载（可用 `KUAKE_LOAD_DOTENV=0` 关闭），不覆盖已 export 的变量。
 
@@ -63,7 +63,7 @@ chmod +x build.sh
 
 ## 快速开始
 
-1. 复制 `[.env.example](.env.example)` 为 `.env`，按文件内说明填入夸克网盘 Cookie（浏览器 F12 → Network 复制）。**勿提交 `.env`。**
+1. 临时设置完整 Cookie 后执行 `./kuake auth save`；凭证会保存到用户配置目录，在 Linux/macOS 上使用 `0600` 文件权限，在 Windows 上使用仅允许当前用户访问的受保护 ACL。也可以继续使用 `.env`。
 2. 在项目目录执行（二进制名以你本机为准）：
 
 ```bash
@@ -71,6 +71,10 @@ chmod +x build.sh
 ./kuake list "/"
 ./kuake upload "file.txt" "/file.txt"
 ```
+
+凭证管理：`./kuake auth status` 查看配置状态，`./kuake auth clear` 清除持久化 Cookie。命令不会输出 Cookie 值。
+
+目录下载支持并发、当前文件进度和独立缓存断点续传；重复运行同一命令会跳过大小一致的完整文件，并继续未完成文件。
 
 更多参数与凭证回退方式见 [docs/cli.md](docs/cli.md)；从源码运行见下方「参与开发」。
 

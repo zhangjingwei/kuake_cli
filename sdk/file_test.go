@@ -1,10 +1,15 @@
 package sdk
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zhangjingwei/kuake_cli/sdk/validation"
 )
@@ -1077,6 +1082,171 @@ func TestGetDownloadURL_InvalidFid_ReturnsValidationError(t *testing.T) {
 	_, err := qc.GetDownloadURL("bad/fid")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestGetDownloadURL_RetriesLargeFileAsDesktopClient(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"code": 23018, "message": "download file size limit",
+			})
+			return
+		}
+		if r.URL.Query().Get("sys") != "win32" || r.URL.Query().Get("ve") != "2.5.56" {
+			t.Errorf("desktop query parameters missing: %s", r.URL.RawQuery)
+		}
+		if !strings.Contains(r.UserAgent(), "quark-cloud-drive/2.5.56") {
+			t.Errorf("desktop user agent missing: %s", r.UserAgent())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code": 0, "status": 200,
+			"data": []map[string]string{{"download_url": "https://download.example/file"}},
+		})
+	}))
+	defer server.Close()
+
+	qc := NewQuarkClient("__pus=test; __puus=test")
+	qc.SetBaseURL(server.URL)
+	qc.authCheckValid = true
+	qc.lastAuthCheck = time.Now()
+	url, err := qc.GetDownloadURL("aea936a39e444e30956165f496c19f16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if url != "https://download.example/file" {
+		t.Fatalf("got %q", url)
+	}
+	if requests != 2 {
+		t.Fatalf("got %d requests, want 2", requests)
+	}
+}
+
+func TestDownloadFileResumesPartialDownload(t *testing.T) {
+	isolateDownloadCache(t)
+	content := []byte("hello resumable world")
+	rangeSeen := ""
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case FILE_DOWNLOAD:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"code": 0, "status": 200,
+				"data": []map[string]string{{"download_url": server.URL + "/blob"}},
+			})
+		case "/blob":
+			rangeSeen = r.Header.Get("Range")
+			if rangeSeen != "bytes=6-" {
+				t.Errorf("Range = %q, want bytes=6-", rangeSeen)
+			}
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes 6-%d/%d", len(content)-1, len(content)))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(content[6:])
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	qc := NewQuarkClient("__pus=test; __puus=test")
+	qc.SetBaseURL(server.URL)
+	qc.authCheckValid = true
+	qc.lastAuthCheck = time.Now()
+	destination := filepath.Join(t.TempDir(), "result.bin")
+	partialPath, err := prepareDownloadPartial("aea936a39e444e30956165f496c19f16", destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(partialPath, content[:6], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var firstProgress int64 = -1
+	err = qc.DownloadFile("aea936a39e444e30956165f496c19f16", destination, "result.bin", func(progress *DownloadProgress) {
+		if firstProgress == -1 {
+			firstProgress = progress.Downloaded
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rangeSeen != "bytes=6-" || firstProgress != 6 {
+		t.Fatalf("range=%q firstProgress=%d", rangeSeen, firstProgress)
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(content) {
+		t.Fatalf("downloaded content = %q", got)
+	}
+	if _, err := os.Stat(partialPath); !os.IsNotExist(err) {
+		t.Fatalf("partial file still exists: %v", err)
+	}
+}
+
+func TestDownloadFileRestartsWhenContentRangeDoesNotMatchPartialFile(t *testing.T) {
+	isolateDownloadCache(t)
+	content := []byte("hello resumable world")
+	var blobRequests int
+	var ranges []string
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case FILE_DOWNLOAD:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"code": 0, "status": 200,
+				"data": []map[string]string{{"download_url": server.URL + "/blob"}},
+			})
+		case "/blob":
+			blobRequests++
+			ranges = append(ranges, r.Header.Get("Range"))
+			if blobRequests == 1 {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes 7-%d/%d", len(content)-1, len(content)))
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = w.Write(content[7:])
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(content)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	qc := NewQuarkClient("__pus=test; __puus=test")
+	qc.SetBaseURL(server.URL)
+	qc.authCheckValid = true
+	qc.lastAuthCheck = time.Now()
+	destination := filepath.Join(t.TempDir(), "result.bin")
+	partialPath, err := prepareDownloadPartial("aea936a39e444e30956165f496c19f16", destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(partialPath, []byte("wrong!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := qc.DownloadFile("aea936a39e444e30956165f496c19f16", destination, "result.bin", nil); err != nil {
+		t.Fatal(err)
+	}
+	if blobRequests != 2 {
+		t.Fatalf("blob requests = %d, want 2", blobRequests)
+	}
+	if len(ranges) != 2 || ranges[0] != "bytes=6-" || ranges[1] != "" {
+		t.Fatalf("Range headers = %#v, want [\"bytes=6-\" \"\"]", ranges)
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(content) {
+		t.Fatalf("downloaded content = %q, want %q", got, content)
+	}
+	if _, err := os.Stat(partialPath); !os.IsNotExist(err) {
+		t.Fatalf("partial file still exists: %v", err)
 	}
 }
 

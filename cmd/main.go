@@ -96,6 +96,14 @@ func main() {
 	}
 
 	loadDotEnvFiles()
+	if command == "auth" {
+		result := handleAuth(args, cookies)
+		outputJSON(result)
+		if result.Success {
+			os.Exit(ExitSuccess)
+		}
+		os.Exit(ExitError)
+	}
 
 	// 创建客户端
 	var client *sdk.QuarkClient
@@ -109,7 +117,7 @@ func main() {
 			os.Exit(ExitError)
 		}
 	}()
-	// 优先级：KUAKE_COOKIE（整段）> KUAKE_PUS + KUAKE_PUUS 拼接 > -cookies/--cookies
+	// 优先级：KUAKE_COOKIE（整段）> KUAKE_PUS + KUAKE_PUUS 拼接 > -cookies/--cookies > 持久化 Cookie
 	if norm := sdk.ResolveEnvCookieString(); norm != "" {
 		client = sdk.NewQuarkClient(norm)
 	} else if cookies != "" {
@@ -120,7 +128,12 @@ func main() {
 			client = sdk.NewQuarkClient(cookies)
 		}
 	} else {
-		client = sdk.NewQuarkClient()
+		storedCookie, _, storedErr := loadStoredCookie()
+		if storedErr != nil {
+			outputJSON(&CLIResult{Success: false, Code: "CREDENTIAL_LOAD_FAILED", Message: storedErr.Error()})
+			os.Exit(ExitError)
+		}
+		client = sdk.NewQuarkClient(storedCookie)
 	}
 
 	// 执行命令
@@ -202,16 +215,20 @@ Options:
   -v, --version                Show version information
 
 Auth:
-  Env cookie: full KUAKE_COOKIE (after trim+normalize) OR split KUAKE_PUS + KUAKE_PUUS (values only, no __pus=/__puus= prefix), then -cookies/--cookies.
-  BREAKING; see CHANGELOG.
+  Precedence: KUAKE_COOKIE, KUAKE_PUS+KUAKE_PUUS, -cookies/--cookies, persisted Cookie.
+  Persist the current environment Cookie with: kuake auth save
+  Stored at user config dir/kuake/credentials.json (0600 on Unix; current-user-only ACL on Windows).
+  KUAKE_CONFIG_DIR overrides the directory.
   Optional .env: if .env exists in cwd, load it before creating the client (does not override existing env vars). Set KUAKE_LOAD_DOTENV=0 to disable.
 
 Commands:
+  auth <save|status|clear>    Persist, inspect, or clear the local Cookie
   user                        Get user information
   list [path] [--stream]     List directory (default: "/")
                               Use --stream to output one JSON per line for pipeline mode
   info <path>                 Get file/folder info (supports pipe mode)
-  download <path> [dest]      Get file download URL, or download to local file if dest given (supports pipe mode)
+  download <path> [dest] [--workers N]
+                              Download a file or directory (directory default workers: 4)
   upload <file> <dest> [--max_upload_parallel N]
                               Upload file (all parameters must be quoted)
   create <name> <pdir>        Create folder (use "/" for root)
@@ -242,6 +259,7 @@ Examples:
   kuake download "/file.txt"
   kuake download "/file.txt" .
   kuake download "/file.txt" ./local.zip
+  kuake download "/folder" ./downloads --workers 4
   kuake upload "file.txt" "/folder/file.txt"
   kuake upload "file.txt" "/folder/file.txt" --max_upload_parallel 4
   kuake create "folder" "/"
@@ -278,6 +296,8 @@ Pipeline Mode:
 Notes:
   - All path parameters must be quoted
   - Root directory is "/"
+  - Download destination without a file extension is treated as a directory
+  - A remote directory always forces dest to be treated as a directory
   - Upload parallel: --max_upload_parallel overrides KUAKE_UPLOAD_PARALLEL when both apply; if only
     env is set (1-16) it is used when the flag is omitted (default 4)
   - Results output as JSON to stdout
@@ -563,7 +583,7 @@ func handleUpload(client *sdk.QuarkClient, args []string) *CLIResult {
 func handleList(client *sdk.QuarkClient, args []string) *CLIResult {
 	dirPath := "/"
 	streamMode := false
-	
+
 	// 解析参数，支持 --stream 选项
 	var filteredArgs []string
 	for i, arg := range args {
@@ -646,7 +666,7 @@ func handleInfo(client *sdk.QuarkClient, args []string) *CLIResult {
 				// 只有 fid 时，尝试直接使用（某些 API 可能支持）
 				targetPath = fid
 			}
-			
+
 			if targetPath == "" {
 				return &CLIResult{
 					Success: false,
@@ -911,7 +931,7 @@ func handleDelete(client *sdk.QuarkClient, args []string) *CLIResult {
 				// 尝试直接使用 fid 作为路径（某些情况下可能有效）
 				targetPath = fid
 			}
-			
+
 			if targetPath == "" {
 				return &CLIResult{
 					Success: false,
@@ -1044,6 +1064,11 @@ func handleShareCreate(client *sdk.QuarkClient, args []string) *CLIResult {
 // handleDownload 处理下载命令：download <path> [dest]
 // 若提供 dest则下载到本地文件并输出进度；否则仅返回下载链接 JSON
 func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
+	parsedArgs, workers, parseErr := parseDownloadArgs(args)
+	if parseErr != nil {
+		return &CLIResult{Success: false, Code: "INVALID_ARGS", Message: parseErr.Error()}
+	}
+	args = parsedArgs
 	// 检查是否有 stdin 输入（管道模式）
 	destPath := ""
 	if len(args) >= 1 {
@@ -1058,7 +1083,7 @@ func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 				// 只有 fid 时，尝试直接使用
 				targetPath = fid
 			}
-			
+
 			if targetPath == "" {
 				return &CLIResult{
 					Success: false,
@@ -1093,11 +1118,15 @@ func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 
 			isDir, _ := fileInfo.Data["dir"].(bool)
 			if isDir {
-				return &CLIResult{
-					Success: false,
-					Code:    "INVALID_FILE_TYPE",
-					Message: "cannot download directory",
+				fileName, _ := fileInfo.Data["file_name"].(string)
+				directoryResult, err := downloadDirectory(client, targetPath, fileName, destPath, workers)
+				if err != nil {
+					return &CLIResult{Success: false, Code: "DOWNLOAD_FAILED", Message: err.Error()}
 				}
+				return &CLIResult{Success: true, Code: "OK", Message: "Directory downloaded successfully", Data: map[string]interface{}{
+					"local_path": directoryResult.LocalPath, "path": targetPath, "total": directoryResult.Total,
+					"downloaded": directoryResult.Downloaded, "skipped": directoryResult.Skipped,
+				}}
 			}
 
 			fileName, _ := fileInfo.Data["file_name"].(string)
@@ -1110,9 +1139,13 @@ func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 
 			// 如果提供了 dest，下载到本地
 			if destPath != "" {
+				resolvedPath, resolveErr := resolveFileDownloadPath(destPath, fileName)
+				if resolveErr != nil {
+					return &CLIResult{Success: false, Code: "INVALID_DESTINATION", Message: resolveErr.Error()}
+				}
 				var lastProgress *sdk.DownloadProgress
 				var lastPrint time.Time
-				err = client.DownloadFile(fileFid, destPath, fileName, func(p *sdk.DownloadProgress) {
+				err = client.DownloadFile(fileFid, resolvedPath, fileName, func(p *sdk.DownloadProgress) {
 					lastProgress = p
 					now := time.Now()
 					if now.Sub(lastPrint) < 500*time.Millisecond && p.Total >= 0 && p.Downloaded < p.Total {
@@ -1137,17 +1170,11 @@ func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 				} else {
 					fmt.Fprintf(os.Stderr, "\n")
 				}
-				localPath := destPath
-				if destPath == "" || destPath == "." || strings.HasSuffix(destPath, "/") || strings.HasSuffix(destPath, string(filepath.Separator)) {
-					localPath = filepath.Join(destPath, fileName)
-				} else if info, err := os.Stat(destPath); err == nil && info.IsDir() {
-					localPath = filepath.Join(destPath, fileName)
-				}
 				return &CLIResult{
 					Success: true,
 					Code:    "OK",
 					Message: "File downloaded successfully",
-					Data:    map[string]interface{}{"local_path": localPath, "path": targetPath},
+					Data:    map[string]interface{}{"local_path": resolvedPath, "path": targetPath},
 				}
 			}
 
@@ -1211,11 +1238,18 @@ func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 
 	isDir, _ := fileInfo.Data["dir"].(bool)
 	if isDir {
-		return &CLIResult{
-			Success: false,
-			Code:    "INVALID_FILE_TYPE",
-			Message: "cannot download directory",
+		fileName, _ := fileInfo.Data["file_name"].(string)
+		if fileName == "" {
+			fileName = filepath.Base(path)
 		}
+		directoryResult, err := downloadDirectory(client, path, fileName, destPath, workers)
+		if err != nil {
+			return &CLIResult{Success: false, Code: "DOWNLOAD_FAILED", Message: err.Error(), Data: map[string]interface{}{"path": path}}
+		}
+		return &CLIResult{Success: true, Code: "OK", Message: "Directory downloaded successfully", Data: map[string]interface{}{
+			"local_path": directoryResult.LocalPath, "path": path, "total": directoryResult.Total,
+			"downloaded": directoryResult.Downloaded, "skipped": directoryResult.Skipped,
+		}}
 	}
 
 	fileName, _ := fileInfo.Data["file_name"].(string)
@@ -1228,9 +1262,13 @@ func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 
 	// 指定了 dest：下载到本地
 	if destPath != "" {
+		resolvedPath, resolveErr := resolveFileDownloadPath(destPath, fileName)
+		if resolveErr != nil {
+			return &CLIResult{Success: false, Code: "INVALID_DESTINATION", Message: resolveErr.Error()}
+		}
 		var lastProgress *sdk.DownloadProgress
 		var lastPrint time.Time
-		err = client.DownloadFile(fid, destPath, fileName, func(p *sdk.DownloadProgress) {
+		err = client.DownloadFile(fid, resolvedPath, fileName, func(p *sdk.DownloadProgress) {
 			lastProgress = p
 			now := time.Now()
 			if now.Sub(lastPrint) < 500*time.Millisecond && p.Total >= 0 && p.Downloaded < p.Total {
@@ -1255,18 +1293,11 @@ func handleDownload(client *sdk.QuarkClient, args []string) *CLIResult {
 		} else {
 			fmt.Fprintf(os.Stderr, "\n")
 		}
-		// 解析最终本地路径（与 SDK 逻辑一致）
-		localPath := destPath
-		if destPath == "" || destPath == "." || strings.HasSuffix(destPath, "/") || strings.HasSuffix(destPath, string(filepath.Separator)) {
-			localPath = filepath.Join(destPath, fileName)
-		} else if info, err := os.Stat(destPath); err == nil && info.IsDir() {
-			localPath = filepath.Join(destPath, fileName)
-		}
 		return &CLIResult{
 			Success: true,
 			Code:    "OK",
 			Message: "File downloaded successfully",
-			Data:    map[string]interface{}{"local_path": localPath, "path": path},
+			Data:    map[string]interface{}{"local_path": resolvedPath, "path": path},
 		}
 	}
 
