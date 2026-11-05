@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- CLI 新增 `auth save` / `auth status` / `auth clear`，用于保存、检查或清除本地 Cookie；当前 `main` 已实现，**v1.5.0 正式发布版不包含这些命令**。v1.5.0 用户请继续使用 `KUAKE_COOKIE`、`KUAKE_PUS` / `KUAKE_PUUS`、`.env` 或 `-cookies` / `--cookies`。README 与 CLI 文档已区分两类构建的认证方式。
+
 - 修复正常文件名与 `.part` 断点文件碰撞导致的数据损坏/丢失：断点改为按远程文件 ID 与绝对目标路径隔离的用户缓存，并校验来源；不再自动迁移旧版未验证的部分文件。完成时使用目标目录临时副本替换，保留失败前的目标文件。
 
 - Windows 持久化 Cookie 改用禁止继承、仅允许当前用户 SID 访问的 ACL；Linux/macOS 继续使用目录 `0700`、文件 `0600`。

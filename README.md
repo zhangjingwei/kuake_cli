@@ -28,7 +28,9 @@
 - JSON 输出、管道模式（与 `jq` 等组合）；可选 **OpenClaw** 技能（见 [openclaw/kuake_skill/](openclaw/kuake_skill/)）：普通用户只需安装 [Releases](https://github.com/zhangjingwei/kuake_cli/releases) 中的 `kuake`、配置 `PATH` 与 `KUAKE_COOKIE`（说明见 [openclaw/kuake_skill/SKILL.md](openclaw/kuake_skill/SKILL.md) 与 [docs/cli.md](docs/cli.md)）
 - **`kuake-mcp` MCP server**：以 stdio 方式将 14 个网盘操作暴露为 MCP 工具，配合 Claude Code 等 MCP 客户端使用；通过 `KUAKE_DENY_OPS` / `KUAKE_DENY_PATHS` / `KUAKE_DENY_EXTS` / `KUAKE_MAX_UPLOAD_MB` / `KUAKE_DOWNLOAD_DIR` 等环境变量控制可执行的操作与沙箱（见 [.mcp.json.example](.mcp.json.example)）
 
-凭证优先从 `KUAKE_COOKIE` / `KUAKE_PUS+KUAKE_PUUS` / `-cookies` 读取；CLI 也可用 `kuake auth save` 将当前环境中的 Cookie 持久化到用户配置目录。旧版 `config.json` 与 `-c, --config` 仍不支持。
+凭证优先从 `KUAKE_COOKIE` / `KUAKE_PUS+KUAKE_PUUS` / `-cookies` 读取。自 v1.5.0 起，旧版 `config.json` 与 `-c, --config` 不再支持。
+
+> **认证功能的版本区别**：[v1.5.0 正式发布版](https://github.com/zhangjingwei/kuake_cli/releases/tag/v1.5.0) **不支持** `kuake auth save`、`auth status` 或 `auth clear`，请使用环境变量或 `.env`。这些凭证持久化命令已在当前 `main` 中实现，仅适用于从当前 `main` 源码构建的 CLI，尚未包含在 v1.5.0 发布包中。
 
 更多用法见 [docs/cli.md](docs/cli.md)。环境变量模板见 [.env.example](.env.example)；存在 `.env` 时 `kuake` 会从当前工作目录加载（可用 `KUAKE_LOAD_DOTENV=0` 关闭），不覆盖已 export 的变量。
 
@@ -63,7 +65,9 @@ chmod +x build.sh
 
 ## 快速开始
 
-1. 临时设置完整 Cookie 后执行 `./kuake auth save`；凭证会保存到用户配置目录，在 Linux/macOS 上使用 `0600` 文件权限，在 Windows 上使用仅允许当前用户访问的受保护 ACL。也可以继续使用 `.env`。
+以下方式适用于 **v1.5.0 正式发布版**，也适用于当前 `main`：
+
+1. 复制 [.env.example](.env.example) 为 `.env`，取消 `KUAKE_COOKIE` 行的注释并填入浏览器复制的完整 Cookie。将 `.env` 放在运行命令的当前目录；也可直接设置环境变量 `KUAKE_COOKIE`。**勿提交或分享含真实 Cookie 的文件。**
 2. 在项目目录执行（二进制名以你本机为准）：
 
 ```bash
@@ -72,7 +76,7 @@ chmod +x build.sh
 ./kuake upload "file.txt" "/file.txt"
 ```
 
-凭证管理：`./kuake auth status` 查看配置状态，`./kuake auth clear` 清除持久化 Cookie。命令不会输出 Cookie 值。
+**仅当前 `main` 源码构建版**：设置 Cookie 后可执行 `./kuake auth save` 保存凭证，使用 `./kuake auth status` 查看配置状态、`./kuake auth clear` 清除持久化 Cookie。Linux/macOS 上凭证文件权限为 `0600`，Windows 上使用仅允许当前用户访问的受保护 ACL；命令不会输出 Cookie 值。使用前可运行 `./kuake --help`，确认命令列表包含 `auth <save|status|clear>`。详情见 [CLI 文档](docs/cli.md#cookie-持久化仅当前-main-源码构建版)。
 
 目录下载支持并发、当前文件进度和独立缓存断点续传；重复运行同一命令会跳过大小一致的完整文件，并继续未完成文件。
 
