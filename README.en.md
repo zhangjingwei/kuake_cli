@@ -28,7 +28,9 @@ This project is licensed under **AGPL-3.0**. **Commercial use** (including SaaS 
 - JSON output and pipe-friendly mode (e.g. with `jq`); optional **OpenClaw** skill ([openclaw/kuake_skill/](openclaw/kuake_skill/)): install `kuake` from [Releases](https://github.com/zhangjingwei/kuake_cli/releases), add it to `PATH`, set `KUAKE_COOKIE` (see [openclaw/kuake_skill/SKILL.md](openclaw/kuake_skill/SKILL.md) and [docs/cli.md](docs/cli.md))
 - **`kuake-mcp` MCP server**: a stdio MCP server exposing the 14 drive operations as MCP tools for clients like Claude Code. An env-driven blacklist (`KUAKE_DENY_OPS` / `KUAKE_DENY_PATHS` / `KUAKE_DENY_EXTS` / `KUAKE_MAX_UPLOAD_MB` / `KUAKE_DOWNLOAD_DIR`) restricts which operations and paths the MCP client can reach (see [.mcp.json.example](.mcp.json.example))
 
-> **v1.5.0 BREAKING:** `config.json` support has been removed; the `-c, --config` flag is gone. Credentials may come from `KUAKE_COOKIE`, `KUAKE_PUS+KUAKE_PUUS`, `-cookies`, or a Cookie previously persisted with `kuake auth save`. Migrate old tokens to one of these sources (a `.env` file works).
+> **v1.5.0 BREAKING:** `config.json` support has been removed; the `-c, --config` flag is gone. Credentials may come from `KUAKE_COOKIE`, `KUAKE_PUS+KUAKE_PUUS`, or `-cookies`. Migrate old tokens to one of these sources (a `.env` file works).
+
+> **Authentication availability:** The [v1.5.0 release](https://github.com/zhangjingwei/kuake_cli/releases/tag/v1.5.0) **does not support** `kuake auth save`, `auth status`, or `auth clear`. Use environment variables or `.env` with that release. These persistence commands are implemented in the current `main` branch and can be used when building the CLI from current `main`; they are not included in the v1.5.0 release binaries.
 
 For full CLI usage see [docs/cli.md](docs/cli.md). Copy [.env.example](.env.example) as a template for environment variables. If a `.env` file exists, `kuake` loads it from the current working directory after parsing flags (set `KUAKE_LOAD_DOTENV=0` to disable). Values already exported in the shell are not overwritten.
 
@@ -65,7 +67,9 @@ Directory downloads support concurrent transfers and resume from identity-checke
 
 ## Quick start
 
-1. Copy [.env.example](.env.example) to `.env` and fill in your Quark Cookie as described in the file (e.g. from the browser devtools Network tab). **Do not commit `.env`.** Alternatively, set the Cookie temporarily and run `kuake auth save`; the stored file uses mode `0600` on Linux/macOS and a protected, current-user-only ACL on Windows.
+These steps work with the **v1.5.0 release** and current `main`:
+
+1. Copy [.env.example](.env.example) to `.env`, uncomment `KUAKE_COOKIE`, and fill in the complete Cookie copied from your browser. Keep `.env` in the directory where you run the command, or set the `KUAKE_COOKIE` environment variable directly. **Do not commit or share files containing your Cookie.**
 2. In the project directory (adjust the binary name for your build):
 
 ```bash
@@ -73,6 +77,8 @@ Directory downloads support concurrent transfers and resume from identity-checke
 ./kuake list "/"
 ./kuake upload "file.txt" "/file.txt"
 ```
+
+**Current `main` source builds only:** After setting the Cookie, run `./kuake auth save` to persist it, `./kuake auth status` to inspect its status, or `./kuake auth clear` to remove it. The stored file uses mode `0600` on Linux/macOS and a protected, current-user-only ACL on Windows; these commands do not print Cookie values. Run `./kuake --help` first and check that the command list includes `auth <save|status|clear>`.
 
 See [docs/cli.md](docs/cli.md) for flags and credential fallbacks. For running from source during development, see **Development** below.
 
