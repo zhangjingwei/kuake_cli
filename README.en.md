@@ -30,7 +30,7 @@ This project is licensed under **AGPL-3.0**. **Commercial use** (including SaaS 
 
 > **v1.5.0 BREAKING:** `config.json` support has been removed; the `-c, --config` flag is gone. Credentials may come from `KUAKE_COOKIE`, `KUAKE_PUS+KUAKE_PUUS`, or `-cookies`. Migrate old tokens to one of these sources (a `.env` file works).
 
-> **Authentication availability:** The [v1.5.0 release](https://github.com/zhangjingwei/kuake_cli/releases/tag/v1.5.0) **does not support** `kuake auth save`, `auth status`, or `auth clear`. Use environment variables or `.env` with that release. These persistence commands are implemented in the current `main` branch and can be used when building the CLI from current `main`; they are not included in the v1.5.0 release binaries.
+> **Authentication availability:** The [v1.5.0 release](https://github.com/zhangjingwei/kuake_cli/releases/tag/v1.5.0) **does not support** `kuake auth save`, `auth status`, or `auth clear`. Use environment variables or `.env` with that release. These persistence commands are included in **v1.6.0 and later**, and are also available in current `main` source builds.
 
 For full CLI usage see [docs/cli.md](docs/cli.md). Copy [.env.example](.env.example) as a template for environment variables. If a `.env` file exists, `kuake` loads it from the current working directory after parsing flags (set `KUAKE_LOAD_DOTENV=0` to disable). Values already exported in the shell are not overwritten.
 
@@ -78,7 +78,7 @@ These steps work with the **v1.5.0 release** and current `main`:
 ./kuake upload "file.txt" "/file.txt"
 ```
 
-**Current `main` source builds only:** After setting the Cookie, run `./kuake auth save` to persist it, `./kuake auth status` to inspect its status, or `./kuake auth clear` to remove it. The stored file uses mode `0600` on Linux/macOS and a protected, current-user-only ACL on Windows; these commands do not print Cookie values. Run `./kuake --help` first and check that the command list includes `auth <save|status|clear>`.
+**v1.6.0 and later:** After setting the Cookie, run `./kuake auth save` to persist it, `./kuake auth status` to inspect its status, or `./kuake auth clear` to remove it. The stored file uses mode `0600` on Linux/macOS and a protected, current-user-only ACL on Windows; these commands do not print Cookie values. Run `./kuake --help` first and check that the command list includes `auth <save|status|clear>`.
 
 See [docs/cli.md](docs/cli.md) for flags and credential fallbacks. For running from source during development, see **Development** below.
 

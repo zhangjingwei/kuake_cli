@@ -20,7 +20,7 @@ const (
 )
 
 // Version 版本号，与编译产物名称一致
-var Version = "v1.5.0"
+var Version = "v1.6.0"
 
 type CLIResult struct {
 	Success bool                   `json:"success"`

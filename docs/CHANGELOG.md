@@ -1,8 +1,13 @@
 # 变更日志
 
-## [Unreleased]
+## v1.6.0
 
-- CLI 新增 `auth save` / `auth status` / `auth clear`，用于保存、检查或清除本地 Cookie；当前 `main` 已实现，**v1.5.0 正式发布版不包含这些命令**。v1.5.0 用户请继续使用 `KUAKE_COOKIE`、`KUAKE_PUS` / `KUAKE_PUUS`、`.env` 或 `-cookies` / `--cookies`。README 与 CLI 文档已区分两类构建的认证方式。
+- 修复下载远端根目录 `/` 时省略本地目标可能解析为本机根目录的问题；默认使用当前目录下的 `quark-download`，并拒绝不安全的远端目录名。
+
+- 大文件下载遇到网页端大小限制（23018）时，自动用桌面客户端标识重试获取下载链接。
+- CLI 支持递归目录下载与 `--workers` 并发控制；文件下载支持 HTTP Range 断点续传、失败保留断点及重新下载回退。
+
+- CLI 新增 `auth save` / `auth status` / `auth clear`，用于保存、检查或清除本地 Cookie；自 v1.6.0 起正式提供，**v1.5.0 正式发布版不包含这些命令**。v1.5.0 用户请继续使用 `KUAKE_COOKIE`、`KUAKE_PUS` / `KUAKE_PUUS`、`.env` 或 `-cookies` / `--cookies`。README 与 CLI 文档已区分两类构建的认证方式。
 
 - 修复正常文件名与 `.part` 断点文件碰撞导致的数据损坏/丢失：断点改为按远程文件 ID 与绝对目标路径隔离的用户缓存，并校验来源；不再自动迁移旧版未验证的部分文件。完成时使用目标目录临时副本替换，保留失败前的目标文件。
 

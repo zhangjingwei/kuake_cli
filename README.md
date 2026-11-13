@@ -36,7 +36,7 @@
 
 凭证优先从 `KUAKE_COOKIE` / `KUAKE_PUS+KUAKE_PUUS` / `-cookies` 读取。自 v1.5.0 起，旧版 `config.json` 与 `-c, --config` 不再支持。
 
-> **认证功能的版本区别**：[v1.5.0 正式发布版](https://github.com/zhangjingwei/kuake_cli/releases/tag/v1.5.0) **不支持** `kuake auth save`、`auth status` 或 `auth clear`，请使用环境变量或 `.env`。这些凭证持久化命令已在当前 `main` 中实现，仅适用于从当前 `main` 源码构建的 CLI，尚未包含在 v1.5.0 发布包中。
+> **认证功能的版本区别**：[v1.5.0 正式发布版](https://github.com/zhangjingwei/kuake_cli/releases/tag/v1.5.0) **不支持** `kuake auth save`、`auth status` 或 `auth clear`，请使用环境变量或 `.env`。这些凭证持久化命令自 **v1.6.0** 起随正式版提供，也可从当前 `main` 源码构建。
 
 更多用法见 [docs/cli.md](docs/cli.md)。环境变量模板见 [.env.example](.env.example)；存在 `.env` 时 `kuake` 会从当前工作目录加载（可用 `KUAKE_LOAD_DOTENV=0` 关闭），不覆盖已 export 的变量。
 
@@ -82,7 +82,7 @@ chmod +x build.sh
 ./kuake upload "file.txt" "/file.txt"
 ```
 
-**仅当前 `main` 源码构建版**：设置 Cookie 后可执行 `./kuake auth save` 保存凭证，使用 `./kuake auth status` 查看配置状态、`./kuake auth clear` 清除持久化 Cookie。Linux/macOS 上凭证文件权限为 `0600`，Windows 上使用仅允许当前用户访问的受保护 ACL；命令不会输出 Cookie 值。使用前可运行 `./kuake --help`，确认命令列表包含 `auth <save|status|clear>`。详情见 [CLI 文档](docs/cli.md#cookie-持久化仅当前-main-源码构建版)。
+**v1.6.0 及以上版本**：设置 Cookie 后可执行 `./kuake auth save` 保存凭证，使用 `./kuake auth status` 查看配置状态、`./kuake auth clear` 清除持久化 Cookie。Linux/macOS 上凭证文件权限为 `0600`，Windows 上使用仅允许当前用户访问的受保护 ACL；命令不会输出 Cookie 值。使用前可运行 `./kuake --help`，确认命令列表包含 `auth <save|status|clear>`。详情见 [CLI 文档](docs/cli.md#cookie-持久化v160-及以上版本)。
 
 目录下载支持并发、当前文件进度和独立缓存断点续传；重复运行同一命令会跳过大小一致的完整文件，并继续未完成文件。
 

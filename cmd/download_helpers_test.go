@@ -89,6 +89,30 @@ func TestParseDownloadArgs(t *testing.T) {
 	}
 }
 
+func TestResolveDirectoryDownloadPathRootUsesSafeDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, destination := range []string{"", "."} {
+		for _, remoteName := range []string{"", ".", "/", `\`} {
+			got, err := resolveDirectoryDownloadPath(destination, remoteName)
+			if err != nil {
+				t.Fatalf("destination %q, remote name %q: %v", destination, remoteName, err)
+			}
+			if got != "quark-download" || filepath.IsAbs(got) {
+				t.Errorf("destination %q, remote name %q resolved to %q", destination, remoteName, got)
+			}
+		}
+	}
+	for _, remoteName := range []string{"..", "../outside", `..\outside`, "/outside"} {
+		if _, err := resolveDirectoryDownloadPath("", remoteName); err == nil {
+			t.Errorf("accepted unsafe remote directory name %q", remoteName)
+		}
+	}
+	explicit := filepath.Join(t.TempDir(), "chosen")
+	if got, err := resolveDirectoryDownloadPath(explicit, "/"); err != nil || got != explicit {
+		t.Fatalf("explicit root download destination changed: %q, %v", got, err)
+	}
+}
+
 func TestResolveLocalDownloadPathStaysWithinRoot(t *testing.T) {
 	root := t.TempDir()
 	got, err := resolveLocalDownloadPath(root, "nested/file.txt")

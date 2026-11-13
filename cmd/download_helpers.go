@@ -65,6 +65,15 @@ func resolveFileDownloadPath(destPath, fileName string) (string, error) {
 // its final component has a file extension.
 func resolveDirectoryDownloadPath(destPath, remoteName string) (string, error) {
 	if destPath == "" || destPath == "." {
+		// The remote root has no basename. Never let its slash (or the Windows
+		// equivalent) turn an omitted destination into the local filesystem root.
+		switch remoteName {
+		case "", ".", "/", `\`:
+			remoteName = "quark-download"
+		}
+		if remoteName == ".." || strings.ContainsAny(remoteName, `/\`) || filepath.IsAbs(remoteName) || filepath.VolumeName(remoteName) != "" {
+			return "", fmt.Errorf("unsafe remote directory name: %s", remoteName)
+		}
 		destPath = filepath.Join(destPath, remoteName)
 	}
 	if err := os.MkdirAll(destPath, 0o755); err != nil {
